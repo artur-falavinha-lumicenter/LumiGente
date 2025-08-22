@@ -1,0 +1,1 @@
+Sempre responda em português independente do idioma do prompt enviado
