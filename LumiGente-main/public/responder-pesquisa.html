@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Responder Pesquisa - Lumicenter Feedback</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border: 1px solid rgb(255, 255, 255);
+            border-radius: 15px 15px 0px 0px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .pesquisa-info {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .pergunta-container {
+            background: white;
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        .pergunta-numero {
+            background: #0d556d;
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .pergunta-texto {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+
+        .opcoes-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .opcao-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .opcao-item:hover {
+            border-color: #0d556d;
+            background: #f0f8ff;
+        }
+
+        .opcao-item input[type="radio"] {
+            margin: 0;
+        }
+
+        .escala-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .escala-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .escala-numero {
+            width: 40px;
+            height: 40px;
+            border: 2px solid #e1e5e9;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .escala-numero:hover,
+        .escala-numero.selected {
+            border-color: #0d556d;
+            background: #0d556d;
+            color: white;
+        }
+
+        .texto-resposta {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .texto-resposta:focus {
+            outline: none;
+            border-color: #0d556d;
+        }
+
+        .sim-nao-container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .sim-nao-item {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+
+        .sim-nao-item:hover {
+            border-color: #0d556d;
+            background: #f0f8ff;
+        }
+
+        .sim-nao-item.selected {
+            border-color: #0d556d;
+            background: #0d556d;
+            color: white;
+        }
+
+        .obrigatoria {
+            color: #e53e3e;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 85, 109, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e1e5e9;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0d556d;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-clipboard-list"></i> Responder Pesquisa</h1>
+        </div>
+
+        <div class="content">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Carregando pesquisa...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <div id="pesquisaContent" style="display: none;">
+                <div class="pesquisa-info" id="pesquisaInfo">
+                    <!-- Informações da pesquisa -->
+                </div>
+
+                <form id="formResposta">
+                    <div id="perguntasContainer">
+                        <!-- Perguntas serão carregadas aqui -->
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-secondary" onclick="window.close()">
+                            <i class="fas fa-times"></i> Cancelar
+                        </button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i> Enviar Respostas
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pesquisa = null;
+        let respostas = {};
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const pesquisaId = urlParams.get('id');
+            
+            if (!pesquisaId) {
+                showError('ID da pesquisa não fornecido');
+                return;
+            }
+            
+            carregarPesquisa(pesquisaId);
+        });
+
+        async function carregarPesquisa(id) {
+            try {
+                const response = await fetch(`/api/pesquisas/${id}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Erro ao carregar pesquisa');
+                }
+                
+                pesquisa = data;
+                renderizarPesquisa();
+            } catch (error) {
+                console.error('Erro ao carregar pesquisa:', error);
+                showError(error.message);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderizarPesquisa() {
+            // Informações da pesquisa
+            const infoDiv = document.getElementById('pesquisaInfo');
+            infoDiv.innerHTML = `
+                <h2>${pesquisa.titulo}</h2>
+                ${pesquisa.descricao ? `<p>${pesquisa.descricao}</p>` : ''}
+                <div style="margin-top: 15px; color: #718096; font-size: 14px;">
+                    <i class="fas fa-user"></i> ${pesquisa.criador_nome} • 
+                    <i class="fas fa-calendar"></i> ${new Date(pesquisa.created_at).toLocaleDateString('pt-BR')}
+                </div>
+            `;
+
+            // Perguntas
+            const container = document.getElementById('perguntasContainer');
+            container.innerHTML = '';
+
+            if (pesquisa.perguntas && pesquisa.perguntas.length > 0) {
+                pesquisa.perguntas.forEach((pergunta, index) => {
+                    const perguntaDiv = document.createElement('div');
+                    perguntaDiv.className = 'pergunta-container';
+                    perguntaDiv.innerHTML = renderizarPergunta(pergunta, index + 1);
+                    container.appendChild(perguntaDiv);
+                });
+            }
+
+            document.getElementById('pesquisaContent').style.display = 'block';
+        }
+
+        function renderizarPergunta(pergunta, numero) {
+            let inputHtml = '';
+            
+            switch (pergunta.tipo) {
+                case 'texto':
+                    inputHtml = `<textarea class="texto-resposta" name="resposta_${pergunta.Id}" placeholder="Digite sua resposta..."></textarea>`;
+                    break;
+                    
+                case 'multipla_escolha':
+                    inputHtml = '<div class="opcoes-container">';
+                    if (pergunta.opcoes && pergunta.opcoes.length > 0) {
+                        pergunta.opcoes.forEach((opcao, idx) => {
+                            inputHtml += `
+                                <div class="opcao-item" onclick="selecionarOpcao(${pergunta.Id}, '${opcao}')">
+                                    <input type="radio" name="resposta_${pergunta.Id}" value="${opcao}" id="opcao_${pergunta.Id}_${idx}">
+                                    <label for="opcao_${pergunta.Id}_${idx}">${opcao}</label>
+                                </div>
+                            `;
+                        });
+                    }
+                    inputHtml += '</div>';
+                    break;
+                    
+                case 'escala':
+                    const min = pergunta.escala_min || 1;
+                    const max = pergunta.escala_max || 5;
+                    inputHtml = '<div class="escala-container">';
+                    for (let i = min; i <= max; i++) {
+                        inputHtml += `
+                            <div class="escala-item" onclick="selecionarEscala(${pergunta.Id}, ${i})">
+                                <div class="escala-numero" id="escala_${pergunta.Id}_${i}">${i}</div>
+                                <small>${i === min ? 'Mín' : i === max ? 'Máx' : ''}</small>
+                            </div>
+                        `;
+                    }
+                    inputHtml += '</div>';
+                    break;
+                    
+                case 'sim_nao':
+                    inputHtml = `
+                        <div class="sim-nao-container">
+                            <div class="sim-nao-item" onclick="selecionarSimNao(${pergunta.Id}, 'Sim')">
+                                <i class="fas fa-check"></i> Sim
+                            </div>
+                            <div class="sim-nao-item" onclick="selecionarSimNao(${pergunta.Id}, 'Não')">
+                                <i class="fas fa-times"></i> Não
+                            </div>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            return `
+                <div class="pergunta-numero">${numero}</div>
+                <div class="pergunta-texto">${pergunta.pergunta}</div>
+                ${inputHtml}
+                ${pergunta.obrigatoria ? '<div class="obrigatoria">* Campo obrigatório</div>' : ''}
+            `;
+        }
+
+        function selecionarOpcao(perguntaId, valor) {
+            respostas[perguntaId] = valor;
+            document.querySelector(`input[name="resposta_${perguntaId}"][value="${valor}"]`).checked = true;
+        }
+
+        function selecionarEscala(perguntaId, valor) {
+            respostas[perguntaId] = valor;
+            
+            // Remover seleção anterior
+            document.querySelectorAll(`[id^="escala_${perguntaId}_"]`).forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            // Adicionar nova seleção
+            document.getElementById(`escala_${perguntaId}_${valor}`).classList.add('selected');
+        }
+
+        function selecionarSimNao(perguntaId, valor) {
+            respostas[perguntaId] = valor;
+            
+            // Remover seleção anterior
+            document.querySelectorAll('.sim-nao-item').forEach(el => {
+                if (el.onclick.toString().includes(`${perguntaId}`)) {
+                    el.classList.remove('selected');
+                }
+            });
+            
+            // Adicionar nova seleção
+            event.target.classList.add('selected');
+        }
+
+        document.getElementById('formResposta').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Coletar respostas de texto
+            document.querySelectorAll('.texto-resposta').forEach(textarea => {
+                const perguntaId = textarea.name.replace('resposta_', '');
+                if (textarea.value.trim()) {
+                    respostas[perguntaId] = textarea.value.trim();
+                }
+            });
+            
+            // Validar campos obrigatórios
+            const perguntasObrigatorias = pesquisa.perguntas.filter(p => p.obrigatoria);
+            for (const pergunta of perguntasObrigatorias) {
+                if (!respostas[pergunta.Id]) {
+                    showError(`A pergunta "${pergunta.pergunta}" é obrigatória`);
+                    return;
+                }
+            }
+            
+            // Enviar respostas
+            try {
+                const response = await fetch(`/api/pesquisas/${pesquisa.Id}/responder`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        respostas: Object.entries(respostas).map(([perguntaId, resposta]) => ({
+                            perguntaId: parseInt(perguntaId),
+                            resposta: resposta,
+                            score: typeof resposta === 'number' ? resposta : null
+                        }))
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Respostas enviadas com sucesso!');
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } else {
+                    showError(result.error || 'Erro ao enviar respostas');
+                }
+            } catch (error) {
+                console.error('Erro ao enviar respostas:', error);
+                showError('Erro ao enviar respostas');
+            }
+        });
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('successMessage').style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

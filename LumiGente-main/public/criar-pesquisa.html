@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Criar Pesquisa - Lumicenter Feedback</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #0d556d;
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border: 1px solid rgb(255, 255, 255);
+            border-radius: 15px 15px 0px 0px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #0d556d;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .perguntas-section {
+            border: 2px solid #e1e5e9;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 30px 0;
+            background: #f8f9fa;
+        }
+
+        .perguntas-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .perguntas-header h3 {
+            color: #2d3748;
+            font-size: 1.3rem;
+        }
+
+        .pergunta-item {
+            background: white;
+            border: 1px solid #e1e5e9;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .pergunta-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .pergunta-numero {
+            background: #0d556d;
+            color: white;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .btn-remove-pergunta {
+            background: #f56565;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 35px;
+            height: 35px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .btn-remove-pergunta:hover {
+            background: #e53e3e;
+            transform: scale(1.1);
+        }
+
+        .opcoes-container {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+
+        .opcao-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            align-items: center;
+        }
+
+        .opcao-item input {
+            flex: 1;
+        }
+
+        .btn-add-opcao {
+            background: #48bb78;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-add-opcao:hover {
+            background: #38a169;
+            transform: translateY(-1px);
+        }
+
+        .escala-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 85, 109, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 12px;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 25px;
+            border-top: 2px solid #e1e5e9;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0d556d;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-plus-circle"></i> Criar Nova Pesquisa</h1>
+            <p>Monte seu formulário com múltiplas perguntas personalizadas</p>
+        </div>
+
+        <div class="content">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Carregando...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <form id="formCriarPesquisa">
+                <div class="form-group">
+                    <label for="titulo">Título da Pesquisa *</label>
+                    <input type="text" id="titulo" name="titulo" required placeholder="Digite o título da pesquisa...">
+                </div>
+
+                <div class="form-group">
+                    <label for="descricao">Descrição</label>
+                    <textarea id="descricao" name="descricao" rows="3" placeholder="Descreva o objetivo da pesquisa..."></textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="departamentos">Departamentos Alvo</label>
+                        <select id="departamentos" name="departamentos_alvo">
+                            <option value="Todos">Todos os Departamentos</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="dataEncerramento">Data de Encerramento</label>
+                        <input type="datetime-local" id="dataEncerramento" name="data_encerramento">
+                    </div>
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="anonima" name="anonima">
+                    <label for="anonima">Pesquisa anônima (respostas não identificadas)</label>
+                </div>
+
+                <div class="perguntas-section">
+                    <div class="perguntas-header">
+                        <h3><i class="fas fa-question-circle"></i> Perguntas do Formulário</h3>
+                    </div>
+                    <div id="perguntasContainer">
+                        <!-- Perguntas serão adicionadas aqui -->
+                    </div>
+                    <div style="text-align: center; margin-top: 20px;">
+                        <button type="button" class="btn btn-success btn-small" onclick="adicionarPergunta()">
+                            <i class="fas fa-plus"></i> Adicionar Pergunta
+                        </button>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-secondary" onclick="window.close()">
+                        <i class="fas fa-times"></i> Cancelar
+                    </button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Criar Pesquisa
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let departamentos = [];
+        let perguntaCounter = 0;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            carregarDepartamentos();
+            adicionarPergunta(); // Adicionar primeira pergunta automaticamente
+        });
+
+        async function carregarDepartamentos() {
+            try {
+                const response = await fetch('/api/pesquisas/departamentos');
+                departamentos = await response.json();
+                
+                const select = document.getElementById('departamentos');
+                select.innerHTML = '';
+                
+                departamentos.forEach(dept => {
+                    const option = document.createElement('option');
+                    option.value = dept;
+                    option.textContent = dept;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Erro ao carregar departamentos:', error);
+            }
+        }
+
+        function adicionarPergunta() {
+            perguntaCounter++;
+            const container = document.getElementById('perguntasContainer');
+            
+            const perguntaDiv = document.createElement('div');
+            perguntaDiv.className = 'pergunta-item';
+            perguntaDiv.id = `pergunta-${perguntaCounter}`;
+            
+            perguntaDiv.innerHTML = `
+                <div class="pergunta-header">
+                    <div class="pergunta-numero">${perguntaCounter}</div>
+                    <button type="button" class="btn-remove-pergunta" onclick="removerPergunta(${perguntaCounter})">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Texto da Pergunta *</label>
+                    <input type="text" name="pergunta_texto_${perguntaCounter}" required placeholder="Digite sua pergunta...">
+                </div>
+                
+                <div class="form-group">
+                    <label>Tipo de Pergunta</label>
+                    <select name="pergunta_tipo_${perguntaCounter}" onchange="alterarTipoPergunta(${perguntaCounter}, this.value)">
+                        <option value="texto">Texto Livre</option>
+                        <option value="multipla_escolha">Múltipla Escolha</option>
+                        <option value="escala">Escala (1-5)</option>
+                        <option value="sim_nao">Sim/Não</option>
+                    </select>
+                </div>
+                
+                <div id="opcoes-${perguntaCounter}" class="opcoes-container" style="display: none;">
+                    <label><strong>Opções de Resposta</strong></label>
+                    <div id="opcoes-list-${perguntaCounter}"></div>
+                    <button type="button" class="btn-add-opcao" onclick="adicionarOpcao(${perguntaCounter})">
+                        <i class="fas fa-plus"></i> Adicionar Opção
+                    </button>
+                </div>
+                
+                <div id="escala-${perguntaCounter}" class="escala-container" style="display: none;">
+                    <div class="form-group">
+                        <label>Valor Mínimo</label>
+                        <input type="number" name="escala_min_${perguntaCounter}" value="1" min="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Valor Máximo</label>
+                        <input type="number" name="escala_max_${perguntaCounter}" value="5" max="10">
+                    </div>
+                </div>
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" name="pergunta_obrigatoria_${perguntaCounter}" id="obrigatoria-${perguntaCounter}">
+                    <label for="obrigatoria-${perguntaCounter}">Pergunta obrigatória</label>
+                </div>
+            `;
+            
+            container.appendChild(perguntaDiv);
+        }
+
+        function removerPergunta(id) {
+            if (document.querySelectorAll('.pergunta-item').length <= 1) {
+                showError('Deve haver pelo menos uma pergunta');
+                return;
+            }
+            
+            const pergunta = document.getElementById(`pergunta-${id}`);
+            if (pergunta) {
+                pergunta.remove();
+                renumerarPerguntas();
+            }
+        }
+
+        function renumerarPerguntas() {
+            const perguntas = document.querySelectorAll('.pergunta-item');
+            perguntas.forEach((pergunta, index) => {
+                const numero = pergunta.querySelector('.pergunta-numero');
+                if (numero) {
+                    numero.textContent = index + 1;
+                }
+            });
+        }
+
+        function alterarTipoPergunta(id, tipo) {
+            const opcoesDiv = document.getElementById(`opcoes-${id}`);
+            const escalaDiv = document.getElementById(`escala-${id}`);
+            
+            opcoesDiv.style.display = 'none';
+            escalaDiv.style.display = 'none';
+            
+            if (tipo === 'multipla_escolha') {
+                opcoesDiv.style.display = 'block';
+                if (document.getElementById(`opcoes-list-${id}`).children.length === 0) {
+                    adicionarOpcao(id);
+                    adicionarOpcao(id);
+                }
+            } else if (tipo === 'escala') {
+                escalaDiv.style.display = 'block';
+            }
+        }
+
+        function adicionarOpcao(perguntaId) {
+            const container = document.getElementById(`opcoes-list-${perguntaId}`);
+            const opcaoDiv = document.createElement('div');
+            opcaoDiv.className = 'opcao-item';
+            
+            const opcaoCount = container.children.length + 1;
+            opcaoDiv.innerHTML = `
+                <input type="text" placeholder="Opção ${opcaoCount}" name="opcao_${perguntaId}_${opcaoCount}">
+                <button type="button" class="btn-remove-pergunta" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+            
+            container.appendChild(opcaoDiv);
+        }
+
+        document.getElementById('formCriarPesquisa').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            
+            // Validar campos obrigatórios
+            const titulo = formData.get('titulo');
+            if (!titulo) {
+                showError('Título é obrigatório');
+                return;
+            }
+            
+            // Coletar perguntas
+            const perguntas = [];
+            const perguntasElements = document.querySelectorAll('.pergunta-item');
+            
+            if (perguntasElements.length === 0) {
+                showError('Adicione pelo menos uma pergunta');
+                return;
+            }
+            
+            for (let i = 0; i < perguntasElements.length; i++) {
+                const perguntaEl = perguntasElements[i];
+                const perguntaId = perguntaEl.id.split('-')[1];
+                const texto = formData.get(`pergunta_texto_${perguntaId}`);
+                const tipo = formData.get(`pergunta_tipo_${perguntaId}`);
+                const obrigatoria = formData.get(`pergunta_obrigatoria_${perguntaId}`) === 'on';
+                
+                if (!texto) {
+                    showError(`Texto da pergunta ${i + 1} é obrigatório`);
+                    return;
+                }
+                
+                const pergunta = {
+                    texto: texto,
+                    tipo: tipo,
+                    obrigatoria: obrigatoria
+                };
+                
+                // Adicionar opções se for múltipla escolha
+                if (tipo === 'multipla_escolha') {
+                    const opcoes = [];
+                    const opcoesInputs = perguntaEl.querySelectorAll(`input[name^="opcao_${perguntaId}_"]`);
+                    opcoesInputs.forEach(input => {
+                        if (input.value.trim()) {
+                            opcoes.push(input.value.trim());
+                        }
+                    });
+                    
+                    if (opcoes.length < 2) {
+                        showError(`Pergunta ${i + 1}: Adicione pelo menos 2 opções para múltipla escolha`);
+                        return;
+                    }
+                    
+                    pergunta.opcoes = opcoes;
+                }
+                
+                // Adicionar escala se for tipo escala
+                if (tipo === 'escala') {
+                    pergunta.escala_min = parseInt(formData.get(`escala_min_${perguntaId}`)) || 1;
+                    pergunta.escala_max = parseInt(formData.get(`escala_max_${perguntaId}`)) || 5;
+                }
+                
+                perguntas.push(pergunta);
+            }
+            
+            const pesquisaData = {
+                titulo: titulo,
+                descricao: formData.get('descricao'),
+                perguntas: perguntas,
+                departamentos_alvo: formData.get('departamentos_alvo'),
+                data_encerramento: formData.get('data_encerramento'),
+                anonima: formData.get('anonima') === 'on'
+            };
+            
+            // Mostrar loading
+            document.getElementById('loading').style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/pesquisas', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(pesquisaData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Pesquisa criada com sucesso!');
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } else {
+                    showError('Erro ao criar pesquisa: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Erro ao criar pesquisa:', error);
+                showError('Erro ao criar pesquisa');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        });
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('successMessage').style.display = 'none';
+            
+            // Scroll para o topo
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+            
+            // Scroll para o topo
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>
