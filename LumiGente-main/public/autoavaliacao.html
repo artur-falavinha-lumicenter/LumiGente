@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autoavaliação - Lumicenter Feedback</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border: 1px solid rgb(255, 255, 255);
+            border-radius: 15px 15px 0px 0px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .avaliacao-info {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border-left: 4px solid #0d556d;
+        }
+
+        .avaliacao-info h2 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+
+        .avaliacao-info p {
+            color: #6c757d;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .categoria-section {
+            margin-bottom: 40px;
+        }
+
+        .categoria-header {
+            background: #0d556d;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .pergunta-container {
+            background: white;
+            border: 2px solid #e1e5e9;
+            border-top: none;
+            padding: 25px;
+            margin-bottom: 0;
+        }
+
+        .pergunta-container:last-child {
+            border-radius: 0 0 8px 8px;
+        }
+
+        .pergunta-texto {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .escala-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .escala-label {
+            font-weight: 600;
+            color: #4a5568;
+            min-width: 80px;
+        }
+
+        .escala-inputs {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .escala-inputs input[type="radio"] {
+            display: none;
+        }
+
+        .escala-inputs label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border: 2px solid #e1e5e9;
+            border-radius: 50%;
+            cursor: pointer;
+            font-weight: 600;
+            color: #6c757d;
+            transition: all 0.3s ease;
+        }
+
+        .escala-inputs label:hover {
+            border-color: #0d556d;
+            background: #f0f8ff;
+        }
+
+        .escala-inputs input[type="radio"]:checked + label {
+            background: #0d556d;
+            color: white;
+            border-color: #0d556d;
+        }
+
+        .escala-valores {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .comentario-container {
+            margin-top: 20px;
+        }
+
+        .comentario-container label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .comentario-container textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 80px;
+            transition: border-color 0.3s;
+        }
+
+        .comentario-container textarea:focus {
+            outline: none;
+            border-color: #0d556d;
+        }
+
+        .progress-container {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e1e5e9;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            transition: width 0.3s ease;
+            border-radius: 5px;
+        }
+
+        .progress-text {
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 25px;
+            border-top: 2px solid #e1e5e9;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 85, 109, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0d556d;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                padding: 20px;
+            }
+            
+            .escala-container {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .actions {
+                flex-direction: column;
+                gap: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+                         <div class="header">
+                     <h1><i class="fas fa-user-check"></i> Autoavaliação de Experiência</h1>
+                     <p>Esta é sua autoavaliação - Complete todas as perguntas obrigatórias</p>
+                 </div>
+
+        <div class="content">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Carregando avaliação...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <div id="avaliacaoContent" style="display: none;">
+                <div class="avaliacao-info">
+                    <h2>Informações da Avaliação</h2>
+                    <p><strong>Tipo:</strong> <span id="tipoAvaliacao">-</span></p>
+                    <p><strong>Data Limite:</strong> <span id="dataLimite">-</span></p>
+                    <p><strong>Observações do Gestor:</strong> <span id="observacoesGestor">-</span></p>
+                </div>
+
+                <div class="progress-container">
+                    <div class="progress-text">Progresso da Autoavaliação</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text"><span id="progressText">0%</span> Concluído</div>
+                </div>
+
+                <form id="formAutoavaliacao">
+                    <div id="perguntasContainer">
+                        <!-- Perguntas serão carregadas aqui -->
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-secondary" onclick="window.close()">
+                            <i class="fas fa-times"></i> Cancelar
+                        </button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-check"></i> Concluir Autoavaliação
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let avaliacao = null;
+        let perguntas = [];
+        let respostas = {};
+
+        document.addEventListener('DOMContentLoaded', function() {
+            carregarAvaliacao();
+        });
+
+        async function carregarAvaliacao() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                
+                // Obter ID da avaliação da URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const avaliacaoId = urlParams.get('id');
+                
+                if (!avaliacaoId) {
+                    showError('ID da avaliação não fornecido');
+                    return;
+                }
+
+                // Carregar dados da avaliação
+                const response = await fetch(`/api/avaliacoes/${avaliacaoId}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    avaliacao = result.avaliacao;
+                    perguntas = result.perguntas;
+                    renderizarAvaliacao();
+                } else {
+                    showError('Erro ao carregar avaliação: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Erro ao carregar avaliação:', error);
+                showError('Erro ao carregar avaliação');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderizarAvaliacao() {
+            // Preencher informações da avaliação
+            document.getElementById('tipoAvaliacao').textContent = avaliacao.tipo_avaliacao === '45_dias' ? '45 Dias' : '90 Dias';
+            document.getElementById('dataLimite').textContent = formatarData(avaliacao.data_limite);
+            document.getElementById('observacoesGestor').textContent = avaliacao.observacoes_gestor || 'Nenhuma observação';
+
+            // Renderizar perguntas
+            const container = document.getElementById('perguntasContainer');
+            container.innerHTML = '';
+
+            // Agrupar perguntas por categoria
+            const perguntasPorCategoria = {};
+            perguntas.forEach(pergunta => {
+                if (!perguntasPorCategoria[pergunta.categoria]) {
+                    perguntasPorCategoria[pergunta.categoria] = [];
+                }
+                perguntasPorCategoria[pergunta.categoria].push(pergunta);
+            });
+
+            // Renderizar cada categoria
+            Object.keys(perguntasPorCategoria).forEach(categoria => {
+                const categoriaSection = document.createElement('div');
+                categoriaSection.className = 'categoria-section';
+                
+                categoriaSection.innerHTML = `
+                    <div class="categoria-header">
+                        <i class="fas fa-layer-group"></i> ${categoria}
+                    </div>
+                `;
+
+                perguntasPorCategoria[categoria].forEach(pergunta => {
+                    const perguntaDiv = document.createElement('div');
+                    perguntaDiv.className = 'pergunta-container';
+                    perguntaDiv.innerHTML = `
+                        <div class="pergunta-texto">${pergunta.pergunta}</div>
+                        
+                        <div class="escala-container">
+                            <div class="escala-label">Nota:</div>
+                            <div class="escala-inputs">
+                                ${gerarEscalaInputs(pergunta.id)}
+                            </div>
+                        </div>
+                        
+                        <div class="escala-valores">
+                            <span>1 - Insuficiente</span>
+                            <span>10 - Excelente</span>
+                        </div>
+                        
+                        <div class="comentario-container">
+                            <label for="comentario_${pergunta.id}">Comentário (opcional):</label>
+                            <textarea 
+                                id="comentario_${pergunta.id}" 
+                                name="comentario_${pergunta.id}" 
+                                placeholder="Adicione um comentário para entendermos sua nota..."
+                                onchange="atualizarResposta(${pergunta.id}, 'comentario', this.value)"
+                            ></textarea>
+                        </div>
+                    `;
+                    
+                    categoriaSection.appendChild(perguntaDiv);
+                });
+
+                container.appendChild(categoriaSection);
+            });
+
+            // Mostrar conteúdo
+            document.getElementById('avaliacaoContent').style.display = 'block';
+            
+            // Configurar eventos dos inputs de escala
+            configurarEventosEscala();
+        }
+
+        function gerarEscalaInputs(perguntaId) {
+            let html = '';
+            for (let i = 1; i <= 10; i++) {
+                html += `
+                    <input type="radio" id="escala_${perguntaId}_${i}" name="escala_${perguntaId}" value="${i}" onchange="atualizarResposta(${perguntaId}, 'score', ${i})">
+                    <label for="escala_${perguntaId}_${i}">${i}</label>
+                `;
+            }
+            return html;
+        }
+
+        function configurarEventosEscala() {
+            perguntas.forEach(pergunta => {
+                const inputs = document.querySelectorAll(`input[name="escala_${pergunta.id}"]`);
+                inputs.forEach(input => {
+                    input.addEventListener('change', function() {
+                        atualizarResposta(pergunta.id, 'score', parseInt(this.value));
+                        atualizarProgresso();
+                    });
+                });
+            });
+        }
+
+        function atualizarResposta(perguntaId, campo, valor) {
+            if (!respostas[perguntaId]) {
+                respostas[perguntaId] = {};
+            }
+            respostas[perguntaId][campo] = valor;
+        }
+
+        function atualizarProgresso() {
+            const totalPerguntas = perguntas.length;
+            const perguntasRespondidas = Object.keys(respostas).filter(id => respostas[id].score).length;
+            const progresso = (perguntasRespondidas / totalPerguntas) * 100;
+            
+            document.getElementById('progressFill').style.width = progresso + '%';
+            document.getElementById('progressText').textContent = Math.round(progresso) + '%';
+        }
+
+        // Formulário de autoavaliação
+        document.getElementById('formAutoavaliacao').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Validar se todas as perguntas foram respondidas
+            const perguntasSemScore = perguntas.filter(pergunta => !respostas[pergunta.id] || !respostas[pergunta.id].score);
+            
+            if (perguntasSemScore.length > 0) {
+                showError(`Por favor, responda todas as ${perguntasSemScore.length} perguntas restantes`);
+                return;
+            }
+
+            // Preparar dados para envio
+            const dadosRespostas = perguntas.map(pergunta => ({
+                pergunta_id: pergunta.id,
+                score: respostas[pergunta.id].score,
+                comentario: respostas[pergunta.id].comentario || ''
+            }));
+
+            try {
+                const response = await fetch(`/api/avaliacoes/${avaliacao.id}/autoavaliacao`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        respostas: dadosRespostas
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Autoavaliação concluída com sucesso!');
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } else {
+                    showError('Erro ao salvar autoavaliação: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Erro ao salvar autoavaliação:', error);
+                showError('Erro ao salvar autoavaliação');
+            }
+        });
+
+        function formatarData(dataString) {
+            if (!dataString) return 'N/A';
+            const data = new Date(dataString);
+            return data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('successMessage').style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

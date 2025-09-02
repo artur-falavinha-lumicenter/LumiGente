@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avaliação do Gestor - Lumicenter Feedback</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border: 1px solid rgb(255, 255, 255);
+            border-radius: 15px 15px 0px 0px;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .avaliacao-info {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border-left: 4px solid #0d556d;
+        }
+
+        .avaliacao-info h2 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+
+        .avaliacao-info p {
+            color: #6c757d;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .comparacao-container {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .comparacao-container h3 {
+            color: #856404;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .categoria-section {
+            margin-bottom: 40px;
+        }
+
+        .categoria-header {
+            background: #0d556d;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .pergunta-container {
+            background: white;
+            border: 2px solid #e1e5e9;
+            border-top: none;
+            padding: 25px;
+            margin-bottom: 0;
+        }
+
+        .pergunta-container:last-child {
+            border-radius: 0 0 8px 8px;
+        }
+
+        .pergunta-texto {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .comparacao-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .autoavaliacao-col {
+            border-right: 2px solid #e1e5e9;
+            padding-right: 20px;
+        }
+
+        .avaliacao-gestor-col {
+            padding-left: 20px;
+        }
+
+        .col-header {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 10px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .score-display {
+            background: #e9ecef;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 10px;
+            display: inline-block;
+        }
+
+        .comentario-display {
+            font-style: italic;
+            color: #6c757d;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        .escala-container {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .escala-label {
+            font-weight: 600;
+            color: #4a5568;
+            min-width: 80px;
+        }
+
+        .escala-inputs {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .escala-inputs input[type="radio"] {
+            display: none;
+        }
+
+        .escala-inputs label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border: 2px solid #e1e5e9;
+            border-radius: 50%;
+            cursor: pointer;
+            font-weight: 600;
+            color: #6c757d;
+            transition: all 0.3s ease;
+        }
+
+        .escala-inputs label:hover {
+            border-color: #0d556d;
+            background: #f0f8ff;
+        }
+
+        .escala-inputs input[type="radio"]:checked + label {
+            background: #0d556d;
+            color: white;
+            border-color: #0d556d;
+        }
+
+        .escala-valores {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .comentario-container {
+            margin-top: 20px;
+        }
+
+        .comentario-container label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .comentario-container textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            resize: vertical;
+            min-height: 80px;
+            transition: border-color 0.3s;
+        }
+
+        .comentario-container textarea:focus {
+            outline: none;
+            border-color: #0d556d;
+        }
+
+        .observacoes-finais {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            border: 2px solid #e1e5e9;
+        }
+
+        .observacoes-finais h3 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 25px;
+            border-top: 2px solid #e1e5e9;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(13, 85, 109, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #0d556d;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #c6f6d5;
+            color: #22543d;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                padding: 20px;
+            }
+            
+            .comparacao-row {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+            
+            .autoavaliacao-col {
+                border-right: none;
+                border-bottom: 2px solid #e1e5e9;
+                padding-right: 0;
+                padding-bottom: 15px;
+            }
+            
+            .avaliacao-gestor-col {
+                padding-left: 0;
+            }
+            
+            .escala-container {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            
+            .actions {
+                flex-direction: column;
+                gap: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+                         <div class="header">
+                     <h1><i class="fas fa-user-tie"></i> Avaliação de Experiência</h1>
+                     <p>Avaliação de 45/90 dias do colaborador</p>
+                 </div>
+
+        <div class="content">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Carregando avaliação...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+            <div class="success-message" id="successMessage"></div>
+
+            <div id="avaliacaoContent" style="display: none;">
+                <div class="avaliacao-info">
+                    <h2>Informações da Avaliação</h2>
+                    <p><strong>Colaborador:</strong> <span id="nomeColaborador">-</span></p>
+                    <p><strong>Tipo:</strong> <span id="tipoAvaliacao">-</span></p>
+                    <p><strong>Data Limite:</strong> <span id="dataLimite">-</span></p>
+                    <p><strong>Observações Iniciais:</strong> <span id="observacoesIniciais">-</span></p>
+                </div>
+
+                <div class="comparacao-container">
+                    <h3><i class="fas fa-balance-scale"></i> Comparação: Autoavaliação vs Avaliação do Gestor</h3>
+                    <p>Compare a autoavaliação do colaborador com sua avaliação para identificar diferenças e alinhamentos.</p>
+                </div>
+
+                <form id="formAvaliacaoGestor">
+                    <div id="perguntasContainer">
+                        <!-- Perguntas serão carregadas aqui -->
+                    </div>
+
+                    <div class="observacoes-finais">
+                        <h3><i class="fas fa-comment-dots"></i> Observações Finais</h3>
+                        <div class="form-group">
+                            <label for="observacoesFinais">Observações finais e recomendações:</label>
+                            <textarea 
+                                id="observacoesFinais" 
+                                name="observacoes_finais" 
+                                rows="4" 
+                                placeholder="Adicione suas observações finais, recomendações de desenvolvimento e próximos passos..."
+                                required
+                            ></textarea>
+                        </div>
+                    </div>
+
+                    <div class="actions">
+                        <button type="button" class="btn btn-secondary" onclick="window.close()">
+                            <i class="fas fa-times"></i> Cancelar
+                        </button>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fas fa-check"></i> Concluir Avaliação
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let avaliacao = null;
+        let perguntas = [];
+        let autoavaliacao = {};
+        let avaliacaoGestor = {};
+
+        document.addEventListener('DOMContentLoaded', function() {
+            carregarAvaliacao();
+        });
+
+        async function carregarAvaliacao() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                
+                // Obter ID da avaliação da URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const avaliacaoId = urlParams.get('id');
+                
+                if (!avaliacaoId) {
+                    showError('ID da avaliação não fornecido');
+                    return;
+                }
+
+                // Carregar dados da avaliação
+                const response = await fetch(`/api/avaliacoes/${avaliacaoId}/completa`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    avaliacao = result.avaliacao;
+                    perguntas = result.perguntas;
+                    autoavaliacao = result.autoavaliacao;
+                    renderizarAvaliacao();
+                } else {
+                    showError('Erro ao carregar avaliação: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Erro ao carregar avaliação:', error);
+                showError('Erro ao carregar avaliação');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function renderizarAvaliacao() {
+            // Preencher informações da avaliação
+            document.getElementById('nomeColaborador').textContent = avaliacao.nome_colaborador || 'Colaborador';
+            document.getElementById('tipoAvaliacao').textContent = avaliacao.tipo_avaliacao === '45_dias' ? '45 Dias' : '90 Dias';
+            document.getElementById('dataLimite').textContent = formatarData(avaliacao.data_limite);
+            document.getElementById('observacoesIniciais').textContent = avaliacao.observacoes_gestor || 'Nenhuma observação';
+
+            // Renderizar perguntas
+            const container = document.getElementById('perguntasContainer');
+            container.innerHTML = '';
+
+            // Agrupar perguntas por categoria
+            const perguntasPorCategoria = {};
+            perguntas.forEach(pergunta => {
+                if (!perguntasPorCategoria[pergunta.categoria]) {
+                    perguntasPorCategoria[pergunta.categoria] = [];
+                }
+                perguntasPorCategoria[pergunta.categoria].push(pergunta);
+            });
+
+            // Renderizar cada categoria
+            Object.keys(perguntasPorCategoria).forEach(categoria => {
+                const categoriaSection = document.createElement('div');
+                categoriaSection.className = 'categoria-section';
+                
+                categoriaSection.innerHTML = `
+                    <div class="categoria-header">
+                        <i class="fas fa-layer-group"></i> ${categoria}
+                    </div>
+                `;
+
+                perguntasPorCategoria[categoria].forEach(pergunta => {
+                    const perguntaDiv = document.createElement('div');
+                    perguntaDiv.className = 'pergunta-container';
+                    
+                    const autoavaliacaoData = autoavaliacao[pergunta.id] || {};
+                    
+                    perguntaDiv.innerHTML = `
+                        <div class="pergunta-texto">${pergunta.pergunta}</div>
+                        
+                        <div class="comparacao-row">
+                            <div class="autoavaliacao-col">
+                                <div class="col-header">Autoavaliação do Colaborador</div>
+                                <div class="score-display">Nota: ${autoavaliacaoData.score || 'Não respondido'}</div>
+                                <div class="comentario-display">
+                                    ${autoavaliacaoData.comentario || 'Nenhum comentário'}
+                                </div>
+                            </div>
+                            
+                            <div class="avaliacao-gestor-col">
+                                <div class="col-header">Sua Avaliação</div>
+                                <div class="escala-container">
+                                    <div class="escala-label">Nota:</div>
+                                    <div class="escala-inputs">
+                                        ${gerarEscalaInputs(pergunta.id)}
+                                    </div>
+                                </div>
+                                
+                                <div class="escala-valores">
+                                    <span>1 - Insuficiente</span>
+                                    <span>10 - Excelente</span>
+                                </div>
+                                
+                                <div class="comentario-container">
+                                    <label for="comentario_${pergunta.id}">Seu comentário:</label>
+                                    <textarea 
+                                        id="comentario_${pergunta.id}" 
+                                        name="comentario_${pergunta.id}" 
+                                        placeholder="Adicione seu comentário sobre o desempenho..."
+                                        onchange="atualizarAvaliacaoGestor(${pergunta.id}, 'comentario', this.value)"
+                                    ></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    categoriaSection.appendChild(perguntaDiv);
+                });
+
+                container.appendChild(categoriaSection);
+            });
+
+            // Mostrar conteúdo
+            document.getElementById('avaliacaoContent').style.display = 'block';
+            
+            // Configurar eventos dos inputs de escala
+            configurarEventosEscala();
+        }
+
+        function gerarEscalaInputs(perguntaId) {
+            let html = '';
+            for (let i = 1; i <= 10; i++) {
+                html += `
+                    <input type="radio" id="escala_${perguntaId}_${i}" name="escala_${perguntaId}" value="${i}" onchange="atualizarAvaliacaoGestor(${perguntaId}, 'score', ${i})">
+                    <label for="escala_${perguntaId}_${i}">${i}</label>
+                `;
+            }
+            return html;
+        }
+
+        function configurarEventosEscala() {
+            perguntas.forEach(pergunta => {
+                const inputs = document.querySelectorAll(`input[name="escala_${pergunta.id}"]`);
+                inputs.forEach(input => {
+                    input.addEventListener('change', function() {
+                        atualizarAvaliacaoGestor(pergunta.id, 'score', parseInt(this.value));
+                    });
+                });
+            });
+        }
+
+        function atualizarAvaliacaoGestor(perguntaId, campo, valor) {
+            if (!avaliacaoGestor[perguntaId]) {
+                avaliacaoGestor[perguntaId] = {};
+            }
+            avaliacaoGestor[perguntaId][campo] = valor;
+        }
+
+        // Formulário de avaliação do gestor
+        document.getElementById('formAvaliacaoGestor').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Validar se todas as perguntas foram respondidas
+            const perguntasSemScore = perguntas.filter(pergunta => !avaliacaoGestor[pergunta.id] || !avaliacaoGestor[pergunta.id].score);
+            
+            if (perguntasSemScore.length > 0) {
+                showError(`Por favor, avalie todas as ${perguntasSemScore.length} perguntas restantes`);
+                return;
+            }
+
+            // Validar observações finais
+            const observacoesFinais = document.getElementById('observacoesFinais').value.trim();
+            if (!observacoesFinais) {
+                showError('Por favor, adicione observações finais');
+                return;
+            }
+
+            // Preparar dados para envio
+            const dadosAvaliacao = perguntas.map(pergunta => ({
+                pergunta_id: pergunta.id,
+                score: avaliacaoGestor[pergunta.id].score,
+                comentario: avaliacaoGestor[pergunta.id].comentario || ''
+            }));
+
+            try {
+                const response = await fetch(`/api/avaliacoes/${avaliacao.id}/avaliacao-gestor`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        respostas: dadosAvaliacao,
+                        observacoes_finais: observacoesFinais
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showSuccess('Avaliação concluída com sucesso!');
+                    setTimeout(() => {
+                        window.close();
+                    }, 2000);
+                } else {
+                    showError('Erro ao salvar avaliação: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Erro ao salvar avaliação:', error);
+                showError('Erro ao salvar avaliação');
+            }
+        });
+
+        function formatarData(dataString) {
+            if (!dataString) return 'N/A';
+            const data = new Date(dataString);
+            return data.toLocaleDateString('pt-BR') + ' ' + data.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('successMessage').style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('successMessage');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
