@@ -2,6 +2,24 @@ const express = require('express');
 const path = require('path');
 const sql = require('mssql');
 
+// Função simples de autenticação
+function requireAuth(req, res, next) {
+    console.log('🔐 Verificando autenticação - Sessão:', !!req.session.user, 'URL:', req.originalUrl);
+    
+    if (!req.session.user) {
+        console.log('❌ Usuário não autenticado');
+        // Se é uma requisição de página HTML, redirecionar para login
+        if (req.accepts('html') && !req.xhr) {
+            return res.redirect('/login');
+        }
+        // Se é uma requisição AJAX/API, retornar erro JSON
+        return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    
+    console.log('✅ Usuário autenticado:', req.session.user.userId);
+    next();
+}
+
 // Lazy loading para módulos não essenciais na inicialização
 let cors, bcrypt, validator, session;
 let HierarchyManager, SincronizadorDadosExternos, AnalyticsManager;
@@ -126,351 +144,51 @@ function setupMiddleware() {
     app.use(express.json());
     app.use(session({
         secret: process.env.SESSION_SECRET || 'lumicenter-feedback-secret',
-        resave: process.env.SESSION_RESAVE === 'true',
-        saveUninitialized: process.env.SESSION_SAVE_UNINITIALIZED === 'true',
+        resave: false,
+        saveUninitialized: false,
+        name: 'lumigente.sid', // Nome personalizado para o cookie
         cookie: { 
-            secure: process.env.SESSION_COOKIE_SECURE === 'true', 
-            httpOnly: process.env.SESSION_COOKIE_HTTPONLY === 'true',
-            maxAge: parseInt(process.env.SESSION_COOKIE_MAX_AGE) || 24 * 60 * 60 * 1000 
-        }
+            secure: process.env.NODE_ENV === 'production', // HTTPS em produção
+            httpOnly: true, // Sempre true para segurança
+            maxAge: parseInt(process.env.SESSION_COOKIE_MAX_AGE) || 8 * 60 * 60 * 1000, // 8 horas
+            sameSite: 'strict' // Proteção contra ataques de cross-site
+        },
+        rolling: true // Renovar cookie a cada requisição
     }));
 }
 
 // Configurar middleware
 setupMiddleware();
 
-// Home route - deve vir ANTES do static middleware
+// Home route - redireciona diretamente para login ou app
 app.get('/', (req, res) => {
-    // Se o usuário está autenticado, redirecionar para a aplicação principal
     if (req.session.user) {
-        res.redirect('/index.html');
+        return res.redirect('/index.html');
     } else {
-        // Se não está autenticado, mostrar landing page
-        res.send(`
-            <!DOCTYPE html>
-            <html lang="pt-BR">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Lumicenter Feedback - Sistema de Gestão</title>
-                <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-                <style>
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                    }
-
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
-                        min-height: 100vh;
-                        color: white;
-                        position: relative;
-                        overflow: hidden;
-                    }
-
-                    .wave-background {
-                        position: fixed;
-                        top: 0;
-                        left: 0;
-                        width: 100%;
-                        height: 100%;
-                        pointer-events: none;
-                        z-index: 0;
-                        overflow: hidden;
-                    }
-
-                    .wave {
-                        position: absolute;
-                        width: 300%;
-                        height: 120%;
-                        background: linear-gradient(45deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.2) 50%, rgba(255, 255, 255, 0.1) 100%);
-                        border-radius: 50%;
-                        animation: wave-motion 8s ease-in-out infinite;
-                    }
-
-                    .wave:nth-child(1) {
-                        top: -20%;
-                        left: -50%;
-                        animation-delay: 0s;
-                        opacity: 0.3;
-                    }
-
-                    .wave:nth-child(2) {
-                        top: -10%;
-                        left: -60%;
-                        animation-delay: -2s;
-                        opacity: 0.2;
-                        animation-duration: 10s;
-                    }
-
-                    .wave:nth-child(3) {
-                        top: 0%;
-                        left: -40%;
-                        animation-delay: -4s;
-                        opacity: 0.15;
-                        animation-duration: 12s;
-                    }
-
-                    .wave:nth-child(4) {
-                        top: 20%;
-                        right: -50%;
-                        animation-delay: -1s;
-                        opacity: 0.25;
-                        animation-duration: 9s;
-                        width: 250%;
-                        height: 100%;
-                    }
-
-                    .wave:nth-child(5) {
-                        bottom: -20%;
-                        left: -30%;
-                        animation-delay: -6s;
-                        opacity: 0.2;
-                        animation-duration: 14s;
-                        width: 280%;
-                        height: 110%;
-                    }
-
-                    .wave:nth-child(6) {
-                        top: 50%;
-                        right: -70%;
-                        animation-delay: -3s;
-                        opacity: 0.18;
-                        animation-duration: 11s;
-                        width: 200%;
-                        height: 90%;
-                    }
-
-                    .wave:nth-child(7) {
-                        bottom: 10%;
-                        right: -40%;
-                        animation-delay: -8s;
-                        opacity: 0.12;
-                        animation-duration: 16s;
-                        width: 320%;
-                        height: 130%;
-                    }
-
-                    @keyframes wave-motion {
-                        0%, 100% {
-                            transform: translateX(0%) translateY(0%) rotate(0deg) scale(1);
-                        }
-                        25% {
-                            transform: translateX(5%) translateY(-3%) rotate(2deg) scale(1.05);
-                        }
-                        50% {
-                            transform: translateX(-3%) translateY(-6%) rotate(0deg) scale(0.95);
-                        }
-                        75% {
-                            transform: translateX(-5%) translateY(-3%) rotate(-2deg) scale(1.02);
-                        }
-                    }
-
-                    .container {
-                        max-width: 1200px;
-                        margin: 0 auto;
-                        padding: 40px 20px;
-                        min-height: 100vh;
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: center;
-                        position: relative;
-                        z-index: 1;
-                    }
-
-                    .header {
-                        text-align: center;
-                        margin-bottom: 15px;
-                    }
-
-                    .logo {
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        margin-bottom: 20px;
-                    }
-
-                    .logo i {
-                        font-size: 48px;
-                        margin-right: 15px;
-                        color:rgb(255, 255, 255);
-                    }
-
-                    .logo h1 {
-                        font-size: 36px;
-                        font-weight: bold;
-                        color: white;
-                    }
-
-                    .subtitle {
-                        font-size: 18px;
-                        color: #e5e7eb;
-                        margin-bottom: 40px;
-                    }
-
-                    .features {
-                        display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                        gap: 30px;
-                        margin-bottom: 50px;
-                    }
-
-                    .feature-card {
-                        background: rgba(255, 255, 255, 0.1);
-                        backdrop-filter: blur(10px);
-                        border-radius: 15px;
-                        padding: 30px;
-                        text-align: center;
-                        border: 1px solid rgba(255, 255, 255, 0.3);
-                        transition: all 0.3s ease;
-                    }
-
-                    .feature-card:hover {
-                        transform: translateY(-5px);
-                        border-color: #0d556d;
-                        box-shadow: 0 10px 25px rgba(255, 255, 255, 0.2);
-                    }
-
-                    .feature-card i {
-                        font-size: 36px;
-                        color:rgb(255, 255, 255);
-                        margin-bottom: 15px;
-                    }
-
-                    .feature-card h3 {
-                        font-size: 20px;
-                        margin-bottom: 10px;
-                        color: white;
-                    }
-
-                    .feature-card p {
-                        color: #d1d5db;
-                        line-height: 1.6;
-                    }
-
-                    .cta-section {
-                        text-align: center;
-                        margin-top: 15px;
-                    }
-
-                    .btn-login {
-                        display: inline-flex;
-                        align-items: center;
-                        padding: 16px 32px;
-                        background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
-                        color: white;
-                        text-decoration: none;
-                        border-radius: 50px;
-                        font-size: 18px;
-                        font-weight: 700;
-                        transition: all 0.3s ease;
-                        box-shadow: 0 5px 5px rgba(255, 255, 255, 0.1);
-                        border: 1px solid white;
-                    }
-
-                    .btn-login:hover {
-                        transform: translateY(-2px);
-                        box-shadow: 0 15px 35px #0a4555;
-                        border-color: rgba(255, 255, 255, 0.3);
-                        color: #0d556d;
-                        background: white
-                    }
-
-                    .btn-login i {
-                        margin-right: 10px;
-                    }
-
-                    .footer {
-                        margin-top: 60px;
-                        text-align: center;
-                        color: #9ca3af;
-                        font-size: 14px;
-                    }
-
-                    @media (max-width: 768px) {
-                        .container {
-                            padding: 20px;
-                        }
-                        
-                        .logo h1 {
-                            font-size: 28px;
-                        }
-                        
-                        .features {
-                            grid-template-columns: 1fr;
-                        }
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="wave-background">
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                    <div class="wave"></div>
-                </div>
-                <div class="container">
-                    <div class="header">
-                        <div class="logo">
-                            <i class="fas fa-users"></i>
-                            <h1>LumiGente</h1>
-                        </div>
-                        <p class="subtitle">Sistema completo de gestão de feedbacks, reconhecimentos e avaliações</p>
-                    </div>
-
-                    <div class="features">
-                        <div class="feature-card">
-                            <i class="fas fa-comments"></i>
-                            <h3>Feedbacks</h3>
-                            <p>Envie e receba feedbacks construtivos para melhorar o desempenho da equipe</p>
-                        </div>
-                        <div class="feature-card">
-                            <i class="fas fa-star"></i>
-                            <h3>Reconhecimentos</h3>
-                            <p>Celebre conquistas e reconheça o trabalho excepcional dos colaboradores</p>
-                        </div>
-                        <div class="feature-card">
-                            <i class="fas fa-chart-line"></i>
-                            <h3>Avaliações</h3>
-                            <p>Acompanhe o desenvolvimento através de avaliações estruturadas</p>
-                        </div>
-                        <div class="feature-card">
-                            <i class="fas fa-smile"></i>
-                            <h3>Humor do Dia</h3>
-                            <p>Monitore o bem-estar da equipe com o sistema de humor diário</p>
-                        </div>
-                        <div class="feature-card">
-                            <i class="fas fa-bullseye"></i>
-                            <h3>Gestão de Objetivos</h3>
-                            <p>Defina e acompanhe objetivos com métricas em tempo real</p>
-                        </div>
-                        <div class="feature-card">
-                            <i class="fas fa-poll"></i>
-                            <h3>Pesquisas Rápidas</h3>
-                            <p>Realize pesquisas rápidas para entender a opinião da equipe</p>
-                        </div>
-                    </div>
-
-                    <div class="cta-section">
-                        <a href="/login" class="btn-login">
-                            <i class="fas fa-sign-in-alt"></i>
-                            Acessar o Sistema
-                        </a>
-                    </div>
-
-                    <div class="footer">
-                        <p>© 2025 Lumicenter Lighting. Todos os direitos reservados.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-        `);
+        return res.redirect('/login');
     }
+});
+
+// Rota específica para index.html com proteção TOTAL
+app.get('/index.html', (req, res, next) => {
+    console.log('🔒 Verificando acesso ao index.html - Sessão:', !!req.session.user);
+    if (!req.session.user) {
+        console.log('❌ BLOQUEADO: Acesso negado ao index.html');
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Frame-Options': 'DENY'
+        });
+        return res.redirect('/login');
+    }
+    console.log('✅ Acesso autorizado ao index.html');
+    res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    });
+    next();
 });
 
 // Login route
@@ -478,8 +196,75 @@ app.get('/login', (req, res) => {
     res.sendFile(__dirname + '/public/login.html');
 });
 
+// Middleware para proteger TODAS as páginas HTML autenticadas
+const protectedPages = [
+    '/index.html',
+    '/autoavaliacao.html', 
+    '/avaliacao-gestor.html',
+    '/avaliacoes-periodicas.html',
+    '/criar-pesquisa.html',
+    '/responder-pesquisa.html',
+    '/resultados-pesquisa.html'
+];
+
+// Aplicar proteção para cada página
+protectedPages.forEach(page => {
+    app.get(page, (req, res, next) => {
+        if (!req.session.user) {
+            return res.redirect('/login');
+        }
+        next();
+    });
+});
+
+// Middleware personalizado para interceptar todas as requisições de arquivos HTML
+app.use((req, res, next) => {
+    const requestedFile = req.originalUrl;
+    
+    // Verificar apenas arquivos HTML
+    if (requestedFile.endsWith('.html')) {
+        console.log('🔍 Interceptando requisição HTML:', requestedFile, 'Sessão:', !!req.session.user);
+        
+        // BLOQUEIO TOTAL do index.html sem sessão válida
+        if (requestedFile === '/index.html' && !req.session.user) {
+            console.log('🚫 BLOQUEADO: Acesso ao index.html sem sessão válida');
+            res.set({
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
+            return res.redirect('/login');
+        }
+        
+        // Se é uma página protegida e usuário não está autenticado
+        if (protectedPages.includes(requestedFile) && !req.session.user) {
+            console.log('❌ Página protegida sem sessão - redirecionando');
+            return res.redirect('/login');
+        }
+        
+        // Se é login.html e usuário já está autenticado
+        if (requestedFile === '/login.html' && req.session.user) {
+            console.log('🔄 Usuário logado tentando acessar login - redirecionando para app');
+            return res.redirect('/index.html');
+        }
+    }
+    
+    next();
+});
+
 // Static files - deve vir DEPOIS das rotas específicas
-app.use(express.static(path.join(__dirname, 'public')));
+// Middleware adicional para arquivos estáticos protegidos
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, path) => {
+        if (path.endsWith('index.html')) {
+            res.set({
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
+        }
+    }
+}));
 
 // Rota para favicon
 app.get('/favicon.ico', (req, res) => res.status(204).end());
@@ -511,13 +296,7 @@ sql.connect(dbConfig).then(async () => {
     }
 }).catch(err => console.error('Erro ao conectar ao SQL Server:', err));
 
-// Auth middleware
-const requireAuth = (req, res, next) => {
-    if (!req.session.user) {
-        return res.status(401).json({ error: 'Usuário não autenticado' });
-    }
-    next();
-};
+
 
 // Middleware para verificar permissões hierárquicas
 const requireHierarchyAccess = (minLevel = 1) => {
@@ -1253,14 +1032,42 @@ app.get('/api/fix-999759', requireAuth, async (req, res) => {
     }
 });
 
-app.post('/api/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            return res.status(500).json({ error: 'Erro ao destruir a sessão' });
-        }
-        res.json({ message: 'Sessão encerrada com sucesso' });
-    });
+
+
+// Logout route
+app.post('/api/logout', requireAuth, async (req, res) => {
+    try {
+        console.log('🚪 Processando logout para usuário:', req.session.user.userId);
+        
+        // Destruir a sessão COMPLETAMENTE
+        req.session.destroy((err) => {
+            if (err) {
+                console.error('Erro ao destruir sessão:', err);
+                return res.status(500).json({ error: 'Erro ao fazer logout' });
+            }
+            
+            // Limpar TODOS os cookies possíveis
+            res.clearCookie('lumigente.sid', { path: '/' });
+            res.clearCookie('connect.sid', { path: '/' });
+            res.clearCookie('session', { path: '/' });
+            
+            // Headers adicionais para garantir que não seja cacheado
+            res.set({
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            });
+            
+            console.log('✅ Logout realizado com sucesso - sessão destruída');
+            res.json({ success: true, message: 'Logout realizado com sucesso' });
+        });
+    } catch (error) {
+        console.error('Erro no logout:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
 });
+
+
 
 // API routes
 app.get('/api/metrics', requireAuth, async (req, res) => {
@@ -5149,30 +4956,8 @@ app.get('/api/avaliacoes', requireAuth, async (req, res) => {
 // Buscar avaliações pendentes do usuário
 app.get('/api/avaliacoes/pendentes', requireAuth, async (req, res) => {
     try {
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        await ensureAvaliacaoTablesExist(pool);
-        
-        const result = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    a.Id,
-                    a.titulo,
-                    a.descricao,
-                    a.tipo,
-                    a.data_fim,
-                    ac.status
-                FROM Avaliacoes a
-                INNER JOIN AvaliacaoColaboradores ac ON a.Id = ac.avaliacao_id
-                WHERE ac.colaborador_id = @userId 
-                  AND ac.status = 'Pendente'
-                  AND a.data_fim >= GETDATE()
-                  AND a.status = 'Ativa'
-                ORDER BY a.data_fim ASC
-            `);
-        
-        res.json(result.recordset);
+        // Por enquanto, retornar array vazio já que não temos sistema de avaliações implementado
+        res.json([]);
     } catch (error) {
         console.error('Erro ao buscar avaliações pendentes:', error);
         res.status(500).json({ error: 'Erro ao buscar avaliações pendentes' });

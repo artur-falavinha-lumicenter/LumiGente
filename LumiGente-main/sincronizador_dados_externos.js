@@ -13,7 +13,12 @@ const HierarchyManager = require('./utils/hierarchyManager');
 class SincronizadorDadosExternos {
     constructor(dbConfig) {
         this.dbConfig = dbConfig;
-        this.hierarchyManager = new HierarchyManager(dbConfig);
+        // Configurar para usar LUMICENTER_FEEDBACKS como banco principal
+        this.feedbacksDbConfig = {
+            ...dbConfig,
+            database: 'LUMICENTER_FEEDBACKS'
+        };
+        this.hierarchyManager = new HierarchyManager(this.feedbacksDbConfig);
         this.isRunning = false;
         this.syncInterval = null;
     }
@@ -42,17 +47,17 @@ class SincronizadorDadosExternos {
     }
 
     /**
-     * Função para obter pool de conexão com fallback
+     * Função para obter pool de conexão com banco LUMICENTER_FEEDBACKS (Users e TAB_HIST_SRA)
      */
     async getDatabasePool() {
         try {
-            return await this.connectWithRetry(this.dbConfig);
+            return await this.connectWithRetry(this.feedbacksDbConfig);
         } catch (error) {
             try {
                 const dbConfigFallback = {
-                    ...this.dbConfig,
+                    ...this.feedbacksDbConfig,
                     options: {
-                        ...this.dbConfig.options,
+                        ...this.feedbacksDbConfig.options,
                         requestTimeout: 60000,
                         connectionTimeout: 60000,
                         pool: {
@@ -67,6 +72,13 @@ class SincronizadorDadosExternos {
                 throw fallbackError;
             }
         }
+    }
+
+    /**
+     * Função para obter pool de conexão - agora ambas as tabelas estão no mesmo banco
+     */
+    async getExternalDatabasePool() {
+        return await this.getDatabasePool();
     }
 
     /**
@@ -105,6 +117,7 @@ class SincronizadorDadosExternos {
             await this.syncFuncionarios();
             await this.syncHierarquia();
             await this.updateExistingUsers();
+            await this.updateNullFields();
         } catch (error) {
             console.error('❌ Erro na sincronização:', error);
         }
@@ -179,17 +192,16 @@ class SincronizadorDadosExternos {
                     .input('passwordHash', sql.VarChar, senhaHash)
                     .input('nomeCompleto', sql.VarChar, funcionario.NOME)
                     .input('userName', sql.VarChar, funcionario.CPF)
-                    .input('email', sql.VarChar, `${funcionario.CPF}@lumicenter.com`)
                     .input('nome', sql.VarChar, funcionario.NOME.split(' ')[0])
                     .input('unidade', sql.VarChar, funcionario.FILIAL)
                     .input('cargo', sql.VarChar, funcionario.DEPARTAMENTO)
                     .query(`
                         INSERT INTO Users (CPF, Matricula, HierarchyLevel, HierarchyPath, Departamento, 
                                          PasswordHash, IsActive, NomeCompleto, created_at, UserName, 
-                                         Email, nome, Unidade, Cargo, PasswordTemporary)
+                                         nome, Unidade, Cargo, PasswordTemporary)
                         VALUES (@cpf, @matricula, @hierarchyLevel, @hierarchyPath, @departamento, 
                                @passwordHash, 1, @nomeCompleto, GETDATE(), @userName, 
-                               @email, @nome, @unidade, @cargo, 1)
+                               @nome, @unidade, @cargo, 1)
                     `);
             }
 
@@ -352,6 +364,62 @@ class SincronizadorDadosExternos {
 
         } catch (error) {
             console.error(`❌ Erro ao atualizar usuário ${user.Matricula}:`, error);
+        }
+    }
+
+    /**
+     * Atualiza campos Unidade e Cargo que estão NULL
+     */
+    async updateNullFields() {
+        const pool = await this.getDatabasePool();
+        
+        try {
+            const result = await pool.request().query(`
+                UPDATE u
+                SET 
+                    u.Unidade = sra.FILIAL,
+                    u.Cargo = CASE 
+                        WHEN LTRIM(RTRIM(sra.DEPARTAMENTO)) = '' THEN 'NÃO INFORMADO'
+                        ELSE LTRIM(RTRIM(sra.DEPARTAMENTO))
+                    END,
+                    u.updated_at = GETDATE()
+                FROM Users u
+                INNER JOIN (
+                    SELECT 
+                        CPF, FILIAL, DEPARTAMENTO,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY CPF 
+                            ORDER BY 
+                                CASE WHEN STATUS_GERAL = 'ATIVO' THEN 1 ELSE 2 END,
+                                CASE WHEN SITUACAO_FOLHA = '' OR SITUACAO_FOLHA IS NULL THEN 0 ELSE 1 END,
+                                DTA_ADMISSAO DESC, 
+                                MATRICULA DESC
+                        ) as rn
+                    FROM TAB_HIST_SRA 
+                    WHERE CPF IS NOT NULL
+                ) sra ON u.CPF = sra.CPF AND sra.rn = 1
+                WHERE (u.Unidade IS NULL OR u.Cargo IS NULL)
+                  AND sra.FILIAL IS NOT NULL
+            `);
+
+            if (result.rowsAffected[0] > 0) {
+                console.log(`✅ Atualizados ${result.rowsAffected[0]} usuários com campos NULL`);
+                
+                // Verificar quantos ainda restam apenas para usuários ativos
+                const remaining = await pool.request().query(`
+                    SELECT COUNT(*) as total
+                    FROM Users 
+                    WHERE (Unidade IS NULL OR Cargo IS NULL)
+                      AND IsActive = 1
+                `);
+                
+                console.log(`ℹ️ Restam ${remaining.recordset[0].total} usuários ativos com campos NULL`);
+            } else {
+                console.log('ℹ️ Nenhum usuário com campos NULL encontrado para atualizar');
+            }
+
+        } catch (error) {
+            console.error('❌ Erro ao atualizar campos NULL:', error);
         }
     }
 
