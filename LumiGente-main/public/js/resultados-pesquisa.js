@@ -3,36 +3,81 @@ let pesquisaData = null;
 let resultados = null;
 
 document.addEventListener('DOMContentLoaded', function () {
-    const urlParams = new URLSearchParams(window.location.search);
-    pesquisaId = urlParams.get('id');
-
-    if (!pesquisaId) {
-        showError('ID da pesquisa não fornecido');
-        return;
-    }
-
-    carregarResultados();
+    console.log('🚀 Iniciando carregamento da página de resultados...');
+    
+    // Verificar permissões primeiro
+    console.log('🔐 Verificando permissões de acesso...');
+    verificarPermissoes();
 });
+
+async function verificarPermissoes() {
+    try {
+        console.log('🔍 Verificando permissões de acesso aos resultados...');
+        
+        const response = await fetch('/api/pesquisas/can-create');
+        if (!response.ok) {
+            console.error('❌ Erro na verificação de permissões:', response.status, response.statusText);
+            throw new Error(`Erro ao verificar permissões: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('📊 Resultado da verificação:', data);
+        
+        if (!data.canCreate) {
+            console.log('🚫 Acesso negado - usuário não tem permissão');
+            document.documentElement.innerHTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /resultados-pesquisa.html</pre>\n</body>\n</html>';
+            return;
+        }
+        
+        console.log('✅ Permissão concedida - verificando ID da pesquisa...');
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        pesquisaId = urlParams.get('id');
+        
+        if (!pesquisaId) {
+            console.error('❌ ID da pesquisa não fornecido na URL');
+            showError('ID da pesquisa não foi fornecido. O acesso aos resultados específicos de uma pesquisa deve acontecer através da aba Pesquisa Rápida no sistema.');
+            return;
+        }
+        
+        carregarResultados();
+    } catch (error) {
+        console.error('❌ Erro ao verificar permissões:', error);
+        showError('Erro ao verificar permissões de acesso. Verifique se você tem autorização para acessar esta página.');
+    }
+}
 
 async function carregarResultados() {
     try {
+        console.log('📄 Carregando dados da pesquisa ID:', pesquisaId);
+        
         // Carregar dados da pesquisa
         const pesquisaResponse = await fetch(`/api/pesquisas/${pesquisaId}`);
         if (!pesquisaResponse.ok) {
-            throw new Error('Pesquisa não encontrada');
+            if (pesquisaResponse.status === 403) {
+                throw new Error('Acesso negado. Você não tem permissão para visualizar esta pesquisa.');
+            }
+            throw new Error(`Pesquisa não encontrada (${pesquisaResponse.status})`);
         }
         pesquisaData = await pesquisaResponse.json();
+        console.log('✅ Dados da pesquisa carregados:', pesquisaData.titulo);
 
         // Carregar resultados
+        console.log('📈 Carregando resultados da pesquisa...');
         const resultadosResponse = await fetch(`/api/pesquisas/${pesquisaId}/resultados`);
         if (!resultadosResponse.ok) {
-            throw new Error('Erro ao carregar resultados');
+            if (resultadosResponse.status === 403) {
+                const errorData = await resultadosResponse.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Acesso negado aos resultados da pesquisa.');
+            }
+            throw new Error(`Erro ao carregar resultados (${resultadosResponse.status})`);
         }
         resultados = await resultadosResponse.json();
+        console.log('✅ Resultados carregados:', resultados);
 
         renderizarResultados();
     } catch (error) {
-        console.error('Erro ao carregar resultados:', error);
+        console.error('❌ Erro ao carregar resultados:', error);
         showError(error.message);
     } finally {
         document.getElementById('loading').style.display = 'none';
@@ -312,17 +357,40 @@ function getTipoLabel(tipo) {
 }
 
 function showError(message) {
-    document.getElementById('errorMessage').textContent = message;
+    console.log('❌ Exibindo erro:', message);
+    
+    document.getElementById('errorMessage').innerHTML = `
+        <div style="text-align: center; padding: 40px; background: #fee2e2; border: 1px solid #fecaca; border-radius: 8px; color: #dc2626; max-width: 600px; margin: 0 auto;">
+            <i class="fas fa-exclamation-triangle" style="font-size: 48px; margin-bottom: 20px; color: #dc2626;"></i>
+            <h3 style="margin-bottom: 15px;">Acesso Restrito</h3>
+            <p style="margin-bottom: 20px; line-height: 1.5;">${message}</p>
+            <div style="margin-top: 25px;">
+                <button onclick="window.close()" style="margin: 5px; padding: 12px 24px; background: #dc2626; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                    <i class="fas fa-times"></i> Fechar Janela
+                </button>
+                <button onclick="window.history.back()" style="margin: 5px; padding: 12px 24px; background: #6b7280; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                    <i class="fas fa-arrow-left"></i> Voltar
+                </button>
+                <button onclick="window.location.href='/index.html'" style="margin: 5px; padding: 12px 24px; background: #059669; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                    <i class="fas fa-home"></i> Início
+                </button>
+            </div>
+        </div>
+    `;
     document.getElementById('errorMessage').style.display = 'block';
+    document.getElementById('loading').style.display = 'none';
 }
 
 async function exportarResultados(formato) {
     try {
+        console.log('📥 Iniciando exportação no formato:', formato);
+        
         const response = await fetch(`/api/pesquisas/${pesquisaId}/export?formato=${formato}`, {
             method: 'GET'
         });
 
         if (response.ok) {
+            console.log('✅ Exportação bem-sucedida');
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -333,10 +401,16 @@ async function exportarResultados(formato) {
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
         } else {
-            alert('Erro ao exportar resultados');
+            console.error('❌ Erro na exportação:', response.status, response.statusText);
+            if (response.status === 403) {
+                const errorData = await response.json().catch(() => ({}));
+                alert(errorData.error || 'Acesso negado para exportar resultados.');
+            } else {
+                alert(`Erro ao exportar resultados (${response.status})`);
+            }
         }
     } catch (error) {
-        console.error('Erro ao exportar:', error);
-        alert('Erro ao exportar resultados');
+        console.error('❌ Erro ao exportar:', error);
+        alert('Erro ao exportar resultados: ' + error.message);
     }
 }

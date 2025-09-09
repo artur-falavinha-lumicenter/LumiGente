@@ -1,7 +1,30 @@
 let departamentos = [];
 let perguntaCounter = 0;
 
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', async function () {
+    // Verificar permissões antes de carregar a página
+    try {
+        console.log('🔍 Verificando permissões para criar pesquisa...');
+        const response = await fetch('/api/pesquisas/can-create');
+        if (response.ok) {
+            const data = await response.json();
+            console.log('📊 Resultado da verificação:', data);
+            if (!data.canCreate) {
+                console.log('🚫 Acesso negado - simulando erro 404');
+                document.documentElement.innerHTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /criar-pesquisa.html</pre>\n</body>\n</html>';
+                return;
+            }
+        } else {
+            console.error('❌ Erro na verificação de permissões:', response.status);
+            document.documentElement.innerHTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /criar-pesquisa.html</pre>\n</body>\n</html>';
+            return;
+        }
+    } catch (error) {
+        console.error('❌ Erro ao verificar permissões:', error);
+        document.documentElement.innerHTML = '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /criar-pesquisa.html</pre>\n</body>\n</html>';
+        return;
+    }
+    
     carregarDepartamentos();
     adicionarPergunta(); // Adicionar primeira pergunta automaticamente
 });

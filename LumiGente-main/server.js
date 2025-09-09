@@ -4,10 +4,7 @@ const sql = require('mssql');
 
 // Função simples de autenticação
 function requireAuth(req, res, next) {
-    console.log('🔐 Verificando autenticação - Sessão:', !!req.session.user, 'URL:', req.originalUrl);
-    
     if (!req.session.user) {
-        console.log('❌ Usuário não autenticado');
         // Se é uma requisição de página HTML, redirecionar para login
         if (req.accepts('html') && !req.xhr) {
             return res.redirect('/login');
@@ -15,8 +12,6 @@ function requireAuth(req, res, next) {
         // Se é uma requisição AJAX/API, retornar erro JSON
         return res.status(401).json({ error: 'Usuário não autenticado' });
     }
-    
-    console.log('✅ Usuário autenticado:', req.session.user.userId);
     next();
 }
 
@@ -122,6 +117,74 @@ async function getDatabasePool() {
             console.error('❌ Ambas as configurações falharam:', fallbackError.message);
             throw fallbackError;
         }
+    }
+}
+
+// Função para garantir que as tabelas de chat existam
+async function ensureChatTablesExist(pool) {
+    try {
+        // Primeiro, verificar e criar tabela FeedbackReplies se não existir
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'FeedbackReplies')
+            BEGIN
+                CREATE TABLE FeedbackReplies (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    feedback_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    reply_text NTEXT NOT NULL,
+                    reply_to_id INT NULL,
+                    reply_to_message NTEXT NULL,
+                    reply_to_user NVARCHAR(255) NULL,
+                    created_at DATETIME DEFAULT GETDATE(),
+                    FOREIGN KEY (feedback_id) REFERENCES Feedbacks(Id),
+                    FOREIGN KEY (user_id) REFERENCES Users(Id)
+                );
+                PRINT 'Tabela FeedbackReplies criada com sucesso';
+            END
+        `);
+        
+        // Verificar e criar tabela FeedbackReplyReactions se não existir
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'FeedbackReplyReactions')
+            BEGIN
+                CREATE TABLE FeedbackReplyReactions (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    reply_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    emoji NVARCHAR(10) NOT NULL,
+                    created_at DATETIME DEFAULT GETDATE(),
+                    FOREIGN KEY (reply_id) REFERENCES FeedbackReplies(Id),
+                    FOREIGN KEY (user_id) REFERENCES Users(Id)
+                );
+                PRINT 'Tabela FeedbackReplyReactions criada com sucesso';
+            END
+        `);
+        
+        // Criar índices para melhor performance
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplies_feedback_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplies_feedback_id ON FeedbackReplies(feedback_id);
+                PRINT 'Índice IX_FeedbackReplies_feedback_id criado';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplyReactions_reply_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplyReactions_reply_id ON FeedbackReplyReactions(reply_id);
+                PRINT 'Índice IX_FeedbackReplyReactions_reply_id criado';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplyReactions_user_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplyReactions_user_id ON FeedbackReplyReactions(user_id);
+                PRINT 'Índice IX_FeedbackReplyReactions_user_id criado';
+            END
+        `);
+        
+        console.log('✅ Tabelas de chat verificadas/criadas com sucesso');
+    } catch (error) {
+        console.error('❌ Erro ao criar tabelas de chat:', error.message);
+        // Não falhar se as tabelas já existirem
     }
 }
 
@@ -236,6 +299,29 @@ app.use((req, res, next) => {
             return res.redirect('/login');
         }
         
+        // BLOQUEIO ESPECÍFICO para páginas de pesquisa (apenas RH e T&D)
+        if (requestedFile === '/resultados-pesquisa.html' || requestedFile === '/criar-pesquisa.html') {
+            if (!req.session.user) {
+    
+                res.set('Content-Security-Policy', "default-src 'none'");
+                return res.status(404).send('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET ' + requestedFile + '</pre>\n</body>\n</html>\n');
+            }
+            
+            const user = req.session.user;
+            const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+            const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+            const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                         departamento.includes('TREINAMENTO') || 
+                         departamento.includes('DESENVOLVIMENTO') ||
+                         departamento.includes('T&D');
+            
+            if (!isHR && !isTD) {
+                console.log(`🚫 BLOQUEADO: ${requestedFile} - ${user.nomeCompleto} (${user.departamento})`);
+                res.set('Content-Security-Policy', "default-src 'none'");
+                return res.status(404).send('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET ' + requestedFile + '</pre>\n</body>\n</html>\n');
+            }
+        }
+        
         // Se é uma página protegida e usuário não está autenticado
         if (protectedPages.includes(requestedFile) && !req.session.user) {
             console.log('❌ Página protegida sem sessão - redirecionando');
@@ -272,6 +358,14 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 // Connect to database
 sql.connect(dbConfig).then(async () => {
     console.log('✅ Conectado ao SQL Server');
+    
+    // Garantir que as tabelas de chat existam
+    try {
+        const pool = await sql.connect(dbConfig);
+        await ensureChatTablesExist(pool);
+    } catch (error) {
+        console.log('⚠️ Erro ao verificar tabelas de chat:', error.message);
+    }
     
     // Manter usuários especiais sempre ativos (definidos por variável de ambiente)
     if (process.env.SPECIAL_USERS_CPF) {
@@ -890,66 +984,94 @@ app.get('/api/usuario', (req, res) => {
     }
 });
 
-// Endpoint para corrigir hierarquia do usuário 999759
-app.get('/api/fix-999759', requireAuth, async (req, res) => {
+// Endpoint para corrigir troca de matrícula
+app.post('/api/fix-matricula-change', requireAuth, async (req, res) => {
     try {
+        const { cpf } = req.body;
+        
+        if (!cpf) {
+            return res.status(400).json({ error: 'CPF é obrigatório' });
+        }
+        
         const pool = await sql.connect(dbConfig);
         
-        // Atualizar HIERARQUIA_CC para apontar para a nova matrícula
-        const updateResult = await pool.request()
+        // Buscar funcionário na TAB_HIST_SRA
+        const funcionarioResult = await pool.request()
+            .input('cpf', sql.VarChar, cpf.replace(/[^\d]/g, ''))
             .query(`
-                UPDATE HIERARQUIA_CC 
-                SET RESPONSAVEL_ATUAL = '999759'
-                WHERE RESPONSAVEL_ATUAL = '84059940925'
+                WITH FuncionarioMaisRecente AS (
+                    SELECT 
+                        MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, 
+                        DEPARTAMENTO, SITUACAO_FOLHA, STATUS_GERAL, DTA_ADMISSAO,
+                        ROW_NUMBER() OVER (ORDER BY 
+                            CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END,
+                            CASE WHEN SITUACAO_FOLHA = '' OR SITUACAO_FOLHA IS NULL THEN 0 ELSE 1 END,
+                            DTA_ADMISSAO DESC, 
+                            MATRICULA DESC
+                        ) as rn
+                    FROM TAB_HIST_SRA 
+                    WHERE CPF = @cpf
+                )
+                SELECT TOP 1 MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, DEPARTAMENTO, SITUACAO_FOLHA, STATUS_GERAL
+                FROM FuncionarioMaisRecente
+                WHERE rn = 1
             `);
         
-        // Também atualizar nos níveis hierárquicos
-        await pool.request()
-            .query(`
-                UPDATE HIERARQUIA_CC 
-                SET NIVEL_1_MATRICULA_RESP = '999759'
-                WHERE NIVEL_1_MATRICULA_RESP = '84059940925'
-            `);
+        if (funcionarioResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Funcionário não encontrado' });
+        }
         
-        await pool.request()
-            .query(`
-                UPDATE HIERARQUIA_CC 
-                SET NIVEL_2_MATRICULA_RESP = '999759'
-                WHERE NIVEL_2_MATRICULA_RESP = '84059940925'
-            `);
+        const funcionario = funcionarioResult.recordset[0];
         
-        await pool.request()
-            .query(`
-                UPDATE HIERARQUIA_CC 
-                SET NIVEL_3_MATRICULA_RESP = '999759'
-                WHERE NIVEL_3_MATRICULA_RESP = '84059940925'
-            `);
+        // Buscar usuário no sistema
+        const userResult = await pool.request()
+            .input('cpf', sql.VarChar, cpf)
+            .query('SELECT Id, Matricula, IsActive FROM Users WHERE CPF = @cpf');
         
-        await pool.request()
-            .query(`
-                UPDATE HIERARQUIA_CC 
-                SET NIVEL_4_MATRICULA_RESP = '999759'
-                WHERE NIVEL_4_MATRICULA_RESP = '84059940925'
-            `);
+        if (userResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Usuário não encontrado no sistema' });
+        }
         
-        // Atualizar hierarquia do usuário 999759
-        await pool.request()
-            .query(`
-                UPDATE Users 
-                SET HierarchyLevel = 4,
-                    HierarchyPath = '/TI/GERENCIA',
-                    Departamento = 'Tecnologia da Informação',
-                    updated_at = GETDATE()
-                WHERE Matricula = '999759'
-            `);
+        const user = userResult.recordset[0];
         
-        res.json({ 
-            success: true, 
-            message: `Hierarquia corrigida: ${updateResult.rowsAffected[0]} registros atualizados na HIERARQUIA_CC e usuário definido como Gerente TI`,
-            rowsAffected: updateResult.rowsAffected[0]
-        });
+        // Verificar se houve mudança de matrícula
+        const matriculaChanged = user.Matricula !== funcionario.MATRICULA;
+        
+        if (matriculaChanged && funcionario.STATUS_GERAL === 'ATIVO') {
+            // Reativar usuário e atualizar matrícula
+            await pool.request()
+                .input('userId', sql.Int, user.Id)
+                .input('novaMatricula', sql.VarChar, funcionario.MATRICULA)
+                .input('nomeCompleto', sql.VarChar, funcionario.NOME)
+                .input('departamento', sql.VarChar, funcionario.DEPARTAMENTO)
+                .input('unidade', sql.VarChar, funcionario.FILIAL)
+                .query(`
+                    UPDATE Users 
+                    SET Matricula = @novaMatricula,
+                        NomeCompleto = @nomeCompleto,
+                        Departamento = @departamento,
+                        Unidade = @unidade,
+                        IsActive = 1,
+                        updated_at = GETDATE()
+                    WHERE Id = @userId
+                `);
+            
+            res.json({ 
+                success: true, 
+                message: `Usuário reativado com nova matrícula: ${funcionario.MATRICULA}`,
+                oldMatricula: user.Matricula,
+                newMatricula: funcionario.MATRICULA
+            });
+        } else {
+            res.json({ 
+                success: false, 
+                message: 'Nenhuma alteração necessária',
+                matriculaChanged: matriculaChanged,
+                status: funcionario.STATUS_GERAL
+            });
+        }
     } catch (error) {
-        console.error('Erro ao corrigir hierarquia:', error);
+        console.error('Erro ao corrigir troca de matrícula:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -1006,32 +1128,6 @@ app.get('/api/set-manager-999759', requireAuth, async (req, res) => {
     }
 });
 
-// Endpoint para corrigir hierarquia do usuário 999759
-app.get('/api/fix-999759', requireAuth, async (req, res) => {
-    try {
-        const pool = await sql.connect(dbConfig);
-        
-        // Atualizar hierarquia do usuário 999759
-        await pool.request()
-            .query(`
-                UPDATE Users 
-                SET HierarchyLevel = 4,
-                    HierarchyPath = '/TI/GERENCIA',
-                    Departamento = 'Tecnologia da Informação',
-                    updated_at = GETDATE()
-                WHERE Matricula = '999759'
-            `);
-        
-        res.json({ 
-            success: true, 
-            message: 'Hierarquia do usuário 999759 corrigida para nível 4 (Gerente)' 
-        });
-    } catch (error) {
-        console.error('Erro ao corrigir hierarquia:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
 
 
 // Logout route
@@ -1066,8 +1162,6 @@ app.post('/api/logout', requireAuth, async (req, res) => {
         res.status(500).json({ error: 'Erro interno do servidor' });
     }
 });
-
-
 
 // API routes
 app.get('/api/metrics', requireAuth, async (req, res) => {
@@ -1268,7 +1362,7 @@ app.get('/api/feedbacks/received', requireAuth, async (req, res) => {
                    u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                    u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                    (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-                   (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count
+                   0 as replies_count
             FROM Feedbacks f
             JOIN Users u1 ON f.from_user_id = u1.Id
             JOIN Users u2 ON f.to_user_id = u2.Id
@@ -1314,7 +1408,7 @@ app.get('/api/feedbacks/sent', requireAuth, async (req, res) => {
                    u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                    u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                    (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-                   (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count,
+                   0 as replies_count,
                    CASE WHEN EXISTS(SELECT 1 FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id) THEN 1 ELSE 0 END as has_reactions
             FROM Feedbacks f
             JOIN Users u1 ON f.from_user_id = u1.Id
@@ -1361,7 +1455,7 @@ app.get('/api/feedbacks', requireAuth, async (req, res) => {
                u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-               (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count
+               0 as replies_count
         FROM Feedbacks f
         JOIN Users u1 ON f.from_user_id = u1.Id
         JOIN Users u2 ON f.to_user_id = u2.Id
@@ -1613,12 +1707,457 @@ app.post('/api/feedbacks/:id/react', requireAuth, async (req, res) => {
     }
 });
 
-// Respostas aos feedbacks
-app.get('/api/feedbacks/:id/replies', requireAuth, async (req, res) => {
+// ===== SISTEMA DE THREADS PARA FEEDBACKS =====
+
+// Configurar estrutura de threads no banco
+app.post('/api/feedbacks/setup-threads', requireAuth, async (req, res) => {
     try {
-        const { id } = req.params;
         const pool = await sql.connect(dbConfig);
         
+        // Executar configurações de thread
+        await pool.request().query(`
+            -- Adicionar colunas para threads se não existirem
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'parent_reply_id')
+            BEGIN
+                ALTER TABLE FeedbackReplies ADD parent_reply_id INT NULL;
+                PRINT 'Coluna parent_reply_id adicionada';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'mentioned_reply_id')
+            BEGIN
+                ALTER TABLE FeedbackReplies ADD mentioned_reply_id INT NULL;
+                PRINT 'Coluna mentioned_reply_id adicionada';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'message_type')
+            BEGIN
+                ALTER TABLE FeedbackReplies ADD message_type VARCHAR(20) DEFAULT 'text';
+                PRINT 'Coluna message_type adicionada';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'mention_data')
+            BEGIN
+                ALTER TABLE FeedbackReplies ADD mention_data NTEXT NULL;
+                PRINT 'Coluna mention_data adicionada';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'thread_level')
+            BEGIN
+                ALTER TABLE FeedbackReplies ADD thread_level INT DEFAULT 0;
+                PRINT 'Coluna thread_level adicionada';
+            END
+        `);
+        
+        // Criar tabela de reações se não existir
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'FeedbackReplyReactions')
+            BEGIN
+                CREATE TABLE FeedbackReplyReactions (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    reply_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    emoji VARCHAR(10) NOT NULL,
+                    created_at DATETIME DEFAULT GETDATE(),
+                    FOREIGN KEY (reply_id) REFERENCES FeedbackReplies(Id),
+                    FOREIGN KEY (user_id) REFERENCES Users(Id)
+                );
+                PRINT 'Tabela FeedbackReplyReactions criada';
+            END
+        `);
+        
+        // Adicionar índices para melhor performance
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplies_parent_reply_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplies_parent_reply_id ON FeedbackReplies(parent_reply_id);
+                PRINT 'Índice IX_FeedbackReplies_parent_reply_id criado';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplies_mentioned_reply_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplies_mentioned_reply_id ON FeedbackReplies(mentioned_reply_id);
+                PRINT 'Índice IX_FeedbackReplies_mentioned_reply_id criado';
+            END
+            
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_FeedbackReplyReactions_reply_id')
+            BEGIN
+                CREATE INDEX IX_FeedbackReplyReactions_reply_id ON FeedbackReplyReactions(reply_id);
+                PRINT 'Índice IX_FeedbackReplyReactions_reply_id criado';
+            END
+        `);
+        
+        res.json({ success: true, message: 'Sistema de threads configurado com sucesso! Todas as colunas e tabelas necessárias foram criadas.' });
+    } catch (error) {
+        console.error('Erro ao configurar threads:', error);
+        res.status(500).json({ error: 'Erro ao configurar threads: ' + error.message });
+    }
+});
+
+// Buscar thread completa de um feedback
+app.get('/api/feedbacks/:id/thread', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .query(`
+                SELECT fr.Id, fr.message, fr.user_id, fr.created_at, fr.parent_reply_id, fr.mentioned_reply_id,
+                       u.NomeCompleto as user_name
+                FROM FeedbackReplies fr
+                JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.feedback_id = @feedbackId
+                ORDER BY fr.created_at ASC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar thread:', error);
+        res.status(500).json({ error: 'Erro ao buscar thread' });
+    }
+});
+
+// Enviar resposta na thread
+app.post('/api/feedbacks/:id/thread/reply', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, parentReplyId, mentionedReplyId } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!message) {
+            return res.status(400).json({ error: 'Mensagem é obrigatória' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .input('message', sql.Text, message)
+            .input('parentReplyId', sql.Int, parentReplyId || null)
+            .input('mentionedReplyId', sql.Int, mentionedReplyId || null)
+            .query(`
+                INSERT INTO FeedbackReplies (feedback_id, user_id, message, parent_reply_id, mentioned_reply_id, created_at)
+                OUTPUT INSERTED.Id, INSERTED.message, INSERTED.user_id, INSERTED.created_at
+                VALUES (@feedbackId, @userId, @message, @parentReplyId, @mentionedReplyId, GETDATE())
+            `);
+        
+        const newReply = result.recordset[0];
+        
+        // Buscar nome do usuário
+        const userResult = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query('SELECT NomeCompleto FROM Users WHERE Id = @userId');
+        
+        newReply.user_name = userResult.recordset[0].NomeCompleto;
+        
+        res.json({ success: true, reply: newReply });
+    } catch (error) {
+        console.error('Erro ao enviar resposta:', error);
+        res.status(500).json({ error: 'Erro ao enviar resposta' });
+    }
+});
+
+// Reagir a uma mensagem
+app.post('/api/feedbacks/:feedbackId/messages/:messageId/react', requireAuth, async (req, res) => {
+    try {
+        const { feedbackId, messageId } = req.params;
+        const messageIdInt = parseInt(messageId);
+        
+        if (!messageIdInt || isNaN(messageIdInt) || messageIdInt <= 0) {
+            return res.status(400).json({ error: 'ID da mensagem inválido' });
+        }
+        
+        const { emoji } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!emoji || typeof emoji !== 'string') {
+            return res.status(400).json({ error: 'Emoji é obrigatório' });
+        }
+        
+        console.log('Reagindo à mensagem:', messageId, 'Emoji:', emoji);
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se já reagiu com este emoji
+        const existing = await pool.request()
+            .input('replyId', sql.Int, messageIdInt)
+            .input('userId', sql.Int, userId)
+            .input('emoji', sql.NVarChar, emoji)
+            .query(`
+                SELECT Id FROM FeedbackReplyReactions 
+                WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+            `);
+        
+        if (existing.recordset.length > 0) {
+            // Remover reação
+            await pool.request()
+                .input('replyId', sql.Int, messageIdInt)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.NVarChar, emoji)
+                .query(`
+                    DELETE FROM FeedbackReplyReactions 
+                    WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+                `);
+        } else {
+            // Adicionar reação
+            await pool.request()
+                .input('replyId', sql.Int, messageIdInt)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.NVarChar, emoji)
+                .query(`
+                    INSERT INTO FeedbackReplyReactions (reply_id, user_id, emoji)
+                    VALUES (@replyId, @userId, @emoji)
+                `);
+        }
+        
+        // Buscar reações atualizadas
+        const reactionsResult = await pool.request()
+            .input('replyId', sql.Int, messageIdInt)
+            .query(`
+                SELECT 
+                    frr.emoji,
+                    frr.user_id,
+                    u.nome as user_name
+                FROM FeedbackReplyReactions frr
+                LEFT JOIN Users u ON frr.user_id = u.Id
+                WHERE frr.reply_id = @replyId
+            `);
+        
+        res.json({ 
+            success: true, 
+            action: existing.recordset.length > 0 ? 'removed' : 'added',
+            messageId: messageIdInt,
+            reactions: reactionsResult.recordset
+        });
+    } catch (error) {
+        console.error('Erro ao reagir:', error);
+        res.status(500).json({ error: 'Erro ao reagir' });
+    }
+});
+
+// Buscar thread completa de um feedback
+app.get('/api/feedbacks/:id/thread', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.feedback_id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    0 as parent_reply_id,
+                    0 as mentioned_reply_id,
+                    'text' as message_type,
+                    NULL as mention_data,
+                    0 as thread_level,
+                    COALESCE(u.NomeCompleto, 'Usuário') as user_name,
+                    u.nome as user_first_name,
+                    NULL as mentioned_text,
+                    NULL as mentioned_user_name
+                FROM FeedbackReplies fr
+                LEFT JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.feedback_id = @feedbackId
+                ORDER BY fr.created_at ASC
+            `);
+        
+        // Organizar em estrutura de thread
+        const messages = result.recordset;
+        const threadMap = new Map();
+        const rootMessages = [];
+        
+        // Criar mapa de todas as mensagens
+        messages.forEach(msg => {
+            msg.replies = [];
+            msg.reactions = [];
+            threadMap.set(msg.Id, msg);
+        });
+        
+        // Organizar hierarquia
+        messages.forEach(msg => {
+            if (msg.parent_reply_id && msg.parent_reply_id > 0) {
+                const parent = threadMap.get(msg.parent_reply_id);
+                if (parent) {
+                    parent.replies.push(msg);
+                }
+            } else {
+                rootMessages.push(msg);
+            }
+        });
+        
+        res.json(rootMessages);
+    } catch (error) {
+        console.error('Erro ao buscar thread:', error);
+        res.status(500).json({ error: 'Erro ao buscar thread' });
+    }
+});
+
+// Enviar mensagem na thread
+app.post('/api/feedbacks/:id/thread/reply', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, parentReplyId, mentionedReplyId, messageType = 'text', mentionData } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!message || message.trim() === '') {
+            return res.status(400).json({ error: 'Mensagem é obrigatória' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Calcular nível da thread
+        let threadLevel = 0;
+        if (parentReplyId) {
+            const parentResult = await pool.request()
+                .input('parentId', sql.Int, parentReplyId)
+                .query('SELECT ISNULL(thread_level, 0) as thread_level FROM FeedbackReplies WHERE Id = @parentId');
+            
+            if (parentResult.recordset.length > 0) {
+                threadLevel = parentResult.recordset[0].thread_level + 1;
+            }
+        }
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .input('message', sql.NVarChar(sql.MAX), message.trim())
+            .query(`
+                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text)
+                OUTPUT INSERTED.Id, INSERTED.created_at
+                VALUES (@feedbackId, @userId, @message)
+            `);
+        
+        const newReply = result.recordset[0];
+        
+        // Buscar dados completos da nova mensagem
+        const fullReplyResult = await pool.request()
+            .input('replyId', sql.Int, newReply.Id)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.feedback_id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    0 as parent_reply_id,
+                    0 as mentioned_reply_id,
+                    'text' as message_type,
+                    NULL as mention_data,
+                    0 as thread_level,
+                    COALESCE(u.NomeCompleto, 'Usuário') as user_name,
+                    u.nome as user_first_name,
+                    NULL as mentioned_text,
+                    NULL as mentioned_user_name
+                FROM FeedbackReplies fr
+                LEFT JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.Id = @replyId
+            `);
+        
+        const fullReply = fullReplyResult.recordset[0];
+        fullReply.replies = [];
+        fullReply.reactions = [];
+        
+        res.json({ success: true, reply: fullReply });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem:', error);
+        res.status(500).json({ error: 'Erro ao enviar mensagem' });
+    }
+});
+
+// Reagir com emoji a uma mensagem
+app.post('/api/feedbacks/replies/:replyId/react', requireAuth, async (req, res) => {
+    try {
+        const { replyId } = req.params;
+        const { emoji } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!emoji) {
+            return res.status(400).json({ error: 'Emoji é obrigatório' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se já reagiu com este emoji
+        const existingReaction = await pool.request()
+            .input('replyId', sql.Int, replyId)
+            .input('userId', sql.Int, userId)
+            .input('emoji', sql.VarChar, emoji)
+            .query(`
+                SELECT Id FROM FeedbackReplyReactions 
+                WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+            `);
+        
+        if (existingReaction.recordset.length > 0) {
+            // Remover reação existente
+            await pool.request()
+                .input('replyId', sql.Int, replyId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    DELETE FROM FeedbackReplyReactions 
+                    WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+                `);
+            
+            res.json({ success: true, action: 'removed', emoji });
+        } else {
+            // Adicionar nova reação
+            await pool.request()
+                .input('replyId', sql.Int, replyId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    INSERT INTO FeedbackReplyReactions (reply_id, user_id, emoji)
+                    VALUES (@replyId, @userId, @emoji)
+                `);
+            
+            res.json({ success: true, action: 'added', emoji });
+        }
+    } catch (error) {
+        console.error('Erro ao reagir:', error);
+        res.status(500).json({ error: 'Erro ao reagir' });
+    }
+});
+
+// Buscar reações de uma mensagem
+app.get('/api/feedbacks/replies/:replyId/reactions', requireAuth, async (req, res) => {
+    try {
+        const { replyId } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('replyId', sql.Int, replyId)
+            .query(`
+                SELECT 
+                    frr.emoji,
+                    COUNT(*) as count,
+                    STRING_AGG(u.nome, ', ') as users
+                FROM FeedbackReplyReactions frr
+                JOIN Users u ON frr.user_id = u.Id
+                WHERE frr.reply_id = @replyId
+                GROUP BY frr.emoji
+                ORDER BY count DESC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar reações:', error);
+        res.status(500).json({ error: 'Erro ao buscar reações' });
+    }
+});
+
+// Compatibilidade com sistema antigo
+app.get('/api/feedbacks/:id/replies', requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const pool = await sql.connect(dbConfig);
+    
+    try {
         const result = await pool.request()
             .input('feedbackId', sql.Int, id)
             .query(`
@@ -2678,8 +3217,34 @@ app.post('/api/pesquisas/migrate', requireAuth, async (req, res) => {
     }
 });
 
-// Criar pesquisa rápida (apenas gerentes+)
-app.post('/api/pesquisas', requireAuth, requireManagerAccess, async (req, res) => {
+// Middleware para verificar se é do RH ou T&D
+const requireHRAccess = (req, res, next) => {
+    const user = req.session.user;
+    
+    if (!user) {
+        return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    
+    // Verificar se é do departamento RH ou Treinamento & Desenvolvimento
+    const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+    const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+    const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                 departamento.includes('TREINAMENTO') || 
+                 departamento.includes('DESENVOLVIMENTO') ||
+                 departamento.includes('T&D');
+    
+    if (!isHR && !isTD) {
+        console.log('🚫 ACESSO NEGADO RH/T&D:', user.nomeCompleto, '-', user.departamento);
+        return res.status(403).json({ 
+            error: 'Acesso negado. Apenas usuários do RH e Treinamento & Desenvolvimento podem realizar esta ação.',
+            userDepartment: user.departamento
+        });
+    }
+    next();
+};
+
+// Criar pesquisa rápida (apenas RH)
+app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
     try {
         const { 
             titulo, 
@@ -2737,7 +3302,7 @@ app.post('/api/pesquisas', requireAuth, requireManagerAccess, async (req, res) =
     }
 });
 
-// Listar pesquisas
+// Listar pesquisas (RH vê todas, outros veem apenas as disponíveis para eles)
 app.get('/api/pesquisas', requireAuth, async (req, res) => {
     try {
         const { search, status, departamento } = req.query;
@@ -2765,6 +3330,20 @@ app.get('/api/pesquisas', requireAuth, async (req, res) => {
         params.forEach(param => {
             request.input(param.name, sql.VarChar, param.value);
         });
+        
+        // Verificar se é do RH ou T&D
+        const currentUser = req.session.user;
+        const isHR = currentUser.departamento && (currentUser.departamento.toUpperCase().includes('RH') || currentUser.departamento.toUpperCase().includes('RECURSOS HUMANOS'));
+        const isTD = currentUser.departamento && currentUser.departamento.toUpperCase().includes('DEPARTAMENTO TREINAM&DESENVOLV');
+        
+        // Se não for RH nem T&D, filtrar apenas pesquisas disponíveis para o departamento do usuário
+        if (!isHR && !isTD) {
+            whereClause += ` AND (
+                pr.departamentos_alvo IS NULL 
+                OR pr.departamentos_alvo = 'Todos' 
+                OR pr.departamentos_alvo LIKE '%${currentUser.departamento}%'
+            )`;
+        }
         
         const result = await request.query(`
             SELECT 
@@ -2830,20 +3409,63 @@ app.get('/api/pesquisas/departamentos', requireAuth, async (req, res) => {
     }
 });
 
-// Verificar se usuário pode criar pesquisas
+// Verificar se usuário pode criar pesquisas (RH e T&D)
 app.get('/api/pesquisas/can-create', requireAuth, async (req, res) => {
     try {
         const user = req.session.user;
-        const canCreate = user.role === 'Administrador' || user.hierarchyLevel >= 3;
-        res.json({ canCreate });
+        const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+        const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+        const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                     departamento.includes('TREINAMENTO') || 
+                     departamento.includes('DESENVOLVIMENTO') ||
+                     departamento.includes('T&D');
+        
+
+        
+        res.json({ canCreate: isHR || isTD });
     } catch (error) {
         console.error('Erro ao verificar permissões:', error);
         res.status(500).json({ error: 'Erro ao verificar permissões' });
     }
 });
 
-// Buscar resultados da pesquisa
-app.get('/api/pesquisas/:id/resultados', requireAuth, async (req, res) => {
+// Middleware adicional para verificar acesso a resultados de pesquisa
+const requireSurveyResultsAccess = (req, res, next) => {
+    const user = req.session.user;
+    
+    if (!user) {
+        return res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+    
+    // Verificar se é do departamento RH ou Treinamento & Desenvolvimento
+    const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+    const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+    const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                 departamento.includes('TREINAMENTO') || 
+                 departamento.includes('DESENVOLVIMENTO') ||
+                 departamento.includes('T&D');
+    
+    console.log('🔍 Verificando acesso aos resultados de pesquisa:');
+    console.log('👤 Usuário:', user.nomeCompleto);
+    console.log('🏢 Departamento:', user.departamento);
+    console.log('✅ É RH:', isHR);
+    console.log('✅ É T&D:', isTD);
+    
+    if (!isHR && !isTD) {
+        console.log('🚫 ACESSO NEGADO: Usuário não é do RH nem T&D');
+        return res.status(403).json({ 
+            error: 'Acesso negado. Apenas usuários do RH e Treinamento & Desenvolvimento podem acessar relatórios de pesquisa.',
+            userDepartment: user.departamento,
+            requiredDepartments: ['RH', 'Recursos Humanos', 'Departamento Treinam&Desenvolv', 'Treinamento', 'Desenvolvimento']
+        });
+    }
+    
+    console.log('✅ ACESSO LIBERADO: Usuário autorizado');
+    next();
+};
+
+// Buscar resultados da pesquisa (apenas RH e T&D)
+app.get('/api/pesquisas/:id/resultados', requireAuth, requireHRAccess, async (req, res) => {
     try {
         const { id } = req.params;
         const pool = await sql.connect(dbConfig);
@@ -3208,7 +3830,9 @@ app.post('/api/pesquisas/:id/responder', requireAuth, async (req, res) => {
     }
 });
 
-// Buscar resultados de uma pesquisa
+// Buscar resultados de uma pesquisa (duplicada - removendo)
+// Esta rota está duplicada e será removida
+/*
 app.get('/api/pesquisas/:id/resultados', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -3282,24 +3906,97 @@ app.get('/api/pesquisas/:id/resultados', requireAuth, async (req, res) => {
         res.status(500).json({ error: 'Erro ao buscar resultados' });
     }
 });
+*/
 
-// Encerrar pesquisa
-app.put('/api/pesquisas/:id/encerrar', requireAuth, async (req, res) => {
+// Exportar resultados da pesquisa (apenas RH e T&D)
+app.get('/api/pesquisas/:id/export', requireAuth, requireHRAccess, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { formato = 'csv' } = req.query;
+        const pool = await sql.connect(dbConfig);
+        
+        // Buscar dados da pesquisa
+        const pesquisaResult = await pool.request()
+            .input('pesquisaId', sql.Int, parseInt(id))
+            .query(`
+                SELECT pr.*, u.NomeCompleto as criador_nome
+                FROM PesquisasRapidas pr
+                JOIN Users u ON pr.criado_por = u.Id
+                WHERE pr.Id = @pesquisaId
+            `);
+        
+        if (pesquisaResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Pesquisa não encontrada' });
+        }
+        
+        const pesquisa = pesquisaResult.recordset[0];
+        
+        // Buscar respostas
+        const respostasResult = await pool.request()
+            .input('pesquisaId', sql.Int, parseInt(id))
+            .query(`
+                SELECT 
+                    pr.resposta,
+                    pr.score,
+                    pr.created_at,
+                    CASE WHEN p.anonima = 1 THEN 'Anônimo' ELSE u.NomeCompleto END as autor,
+                    u.Departamento
+                FROM PesquisaRespostas pr
+                LEFT JOIN Users u ON pr.user_id = u.Id
+                JOIN PesquisasRapidas p ON pr.pesquisa_id = p.Id
+                WHERE pr.pesquisa_id = @pesquisaId
+                ORDER BY pr.created_at DESC
+            `);
+        
+        const respostas = respostasResult.recordset;
+        
+        if (formato === 'csv') {
+            let csvContent = 'Resposta,Score,Data,Autor,Departamento\n';
+            respostas.forEach(resposta => {
+                const data = new Date(resposta.created_at).toLocaleDateString('pt-BR');
+                csvContent += `"${resposta.resposta || ''}",${resposta.score || ''},${data},"${resposta.autor || ''}","${resposta.Departamento || ''}"\n`;
+            });
+            
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="resultados-${pesquisa.titulo}-${new Date().toISOString().split('T')[0]}.csv"`);
+            res.send('\uFEFF' + csvContent); // BOM para UTF-8
+        } else if (formato === 'excel') {
+            // Para Excel, usar CSV com separador de ponto e vírgula
+            let csvContent = 'Resposta;Score;Data;Autor;Departamento\n';
+            respostas.forEach(resposta => {
+                const data = new Date(resposta.created_at).toLocaleDateString('pt-BR');
+                csvContent += `"${resposta.resposta || ''}";${resposta.score || ''};${data};"${resposta.autor || ''}";"${resposta.Departamento || ''}"\n`;
+            });
+            
+            res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="resultados-${pesquisa.titulo}-${new Date().toISOString().split('T')[0]}.xls"`);
+            res.send('\uFEFF' + csvContent); // BOM para UTF-8
+        } else {
+            res.status(400).json({ error: 'Formato não suportado' });
+        }
+    } catch (error) {
+        console.error('Erro ao exportar resultados:', error);
+        res.status(500).json({ error: 'Erro ao exportar resultados' });
+    }
+});
+
+// Encerrar pesquisa (apenas RH)
+app.put('/api/pesquisas/:id/encerrar', requireAuth, requireHRAccess, async (req, res) => {
     try {
         const { id } = req.params;
         const pool = await sql.connect(dbConfig);
         
+        // RH pode encerrar qualquer pesquisa, não apenas as que criou
         const result = await pool.request()
             .input('pesquisaId', sql.Int, id)
-            .input('userId', sql.Int, req.session.user.userId)
             .query(`
                 UPDATE PesquisasRapidas 
                 SET status = 'Encerrada'
-                WHERE Id = @pesquisaId AND criado_por = @userId
+                WHERE Id = @pesquisaId
             `);
         
         if (result.rowsAffected[0] === 0) {
-            return res.status(404).json({ error: 'Pesquisa não encontrada ou você não tem permissão' });
+            return res.status(404).json({ error: 'Pesquisa não encontrada' });
         }
         
         res.json({ success: true, message: 'Pesquisa encerrada com sucesso' });
@@ -3313,7 +4010,7 @@ app.put('/api/pesquisas/:id/encerrar', requireAuth, async (req, res) => {
 app.get('/api/pesquisas/disponiveis', requireAuth, async (req, res) => {
     try {
         const userId = req.session.user.userId;
-        const userDepartment = req.session.user.department;
+        const userDepartment = req.session.user.departamento;
         const pool = await sql.connect(dbConfig);
         
         const result = await pool.request()
@@ -3332,7 +4029,11 @@ app.get('/api/pesquisas/disponiveis', requireAuth, async (req, res) => {
                 JOIN Users u ON pr.criado_por = u.Id
                 WHERE pr.status = 'Ativa'
                 AND (pr.data_encerramento IS NULL OR pr.data_encerramento > GETDATE())
-                AND (pr.departamentos_alvo IS NULL OR pr.departamentos_alvo LIKE @userDepartment)
+                AND (
+                    pr.departamentos_alvo IS NULL 
+                    OR pr.departamentos_alvo = 'Todos' 
+                    OR pr.departamentos_alvo LIKE '%' + @userDepartment + '%'
+                )
                 ORDER BY pr.Id DESC
             `);
         
@@ -4262,6 +4963,525 @@ app.post('/api/analytics/update-rankings', requireAuth, requireManagerAccess, as
     } catch (error) {
         console.error('Erro ao atualizar rankings:', error);
         res.status(500).json({ error: 'Erro ao atualizar rankings' });
+    }
+});
+
+// ===== SISTEMA DE CHAT PARA FEEDBACKS =====
+
+// Rota para criar tabelas de chat manualmente
+app.post('/api/chat/setup-tables', requireAuth, async (req, res) => {
+    try {
+        const pool = await sql.connect(dbConfig);
+        await ensureChatTablesExist(pool);
+        
+        // Adicionar colunas de referência se não existirem
+        try {
+            await pool.request().query(`
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'reply_to_id')
+                BEGIN
+                    ALTER TABLE FeedbackReplies ADD reply_to_id INT NULL;
+                    PRINT 'Coluna reply_to_id adicionada';
+                END
+                
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'reply_to_message')
+                BEGIN
+                    ALTER TABLE FeedbackReplies ADD reply_to_message NTEXT NULL;
+                    PRINT 'Coluna reply_to_message adicionada';
+                END
+                
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FeedbackReplies' AND COLUMN_NAME = 'reply_to_user')
+                BEGIN
+                    ALTER TABLE FeedbackReplies ADD reply_to_user NVARCHAR(255) NULL;
+                    PRINT 'Coluna reply_to_user adicionada';
+                END
+            `);
+        } catch (error) {
+            console.log('Erro ao adicionar colunas de referência:', error.message);
+        }
+        
+        res.json({ success: true, message: 'Tabelas de chat criadas/verificadas com sucesso' });
+    } catch (error) {
+        console.error('Erro ao configurar tabelas de chat:', error);
+        res.status(500).json({ error: 'Erro ao configurar tabelas de chat: ' + error.message });
+    }
+});
+
+// Buscar informações do feedback para o chat
+app.get('/api/feedbacks/:id/info', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .query(`
+                SELECT 
+                    f.Id,
+                    f.type,
+                    f.category,
+                    f.message,
+                    u1.NomeCompleto as from_name,
+                    u2.NomeCompleto as to_name
+                FROM Feedbacks f
+                JOIN Users u1 ON f.from_user_id = u1.Id
+                JOIN Users u2 ON f.to_user_id = u2.Id
+                WHERE f.Id = @feedbackId
+            `);
+        
+        if (result.recordset.length === 0) {
+            return res.status(404).json({ error: 'Feedback não encontrado' });
+        }
+        
+        const feedback = result.recordset[0];
+        res.json({
+            title: `${feedback.type} - ${feedback.category}`,
+            from: feedback.from_name,
+            to: feedback.to_name,
+            message: feedback.message
+        });
+    } catch (error) {
+        console.error('Erro ao buscar info do feedback:', error);
+        res.status(500).json({ error: 'Erro ao buscar informações do feedback' });
+    }
+});
+
+// Buscar mensagens do chat de um feedback
+app.get('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const feedbackId = parseInt(id);
+        
+        if (!feedbackId || isNaN(feedbackId) || feedbackId <= 0) {
+            return res.status(400).json({ error: 'ID do feedback inválido' });
+        }
+        
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        // Garantir que as tabelas existam
+        await ensureChatTablesExist(pool);
+        
+
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, feedbackId)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.feedback_id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    fr.reply_to_id,
+                    fr.reply_to_message,
+                    fr.reply_to_user,
+                    COALESCE(u.NomeCompleto, 'Usuário') as user_name,
+                    u.nome as user_first_name
+                FROM FeedbackReplies fr
+                LEFT JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.feedback_id = @feedbackId
+                ORDER BY fr.created_at ASC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar mensagens do chat:', error);
+        res.status(500).json({ error: 'Erro ao buscar mensagens do chat: ' + error.message });
+    }
+});
+
+// Enviar mensagem no chat
+app.post('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const feedbackId = parseInt(id);
+        
+        if (!feedbackId || isNaN(feedbackId) || feedbackId <= 0) {
+            return res.status(400).json({ error: 'ID do feedback inválido' });
+        }
+        
+        const { message, reply_to } = req.body;
+        const userId = req.session.user.userId;
+        
+        console.log('📨 Dados recebidos:', { message, reply_to, userId });
+        
+        if (!message || message.trim() === '') {
+            return res.status(400).json({ error: 'Mensagem é obrigatória' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Garantir que as tabelas existam
+        await ensureChatTablesExist(pool);
+        
+        // Buscar dados da mensagem referenciada se houver
+        let replyToData = null;
+        if (reply_to) {
+            const replyResult = await pool.request()
+                .input('replyId', sql.Int, reply_to)
+                .query(`
+                    SELECT fr.reply_text, u.NomeCompleto
+                    FROM FeedbackReplies fr
+                    LEFT JOIN Users u ON fr.user_id = u.Id
+                    WHERE fr.Id = @replyId
+                `);
+            
+            if (replyResult.recordset.length > 0) {
+                replyToData = replyResult.recordset[0];
+            }
+        }
+        
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, feedbackId)
+            .input('userId', sql.Int, userId)
+            .input('message', sql.NVarChar(sql.MAX), message.trim())
+            .input('replyToId', sql.Int, reply_to || null)
+            .input('replyToMessage', sql.NVarChar(sql.MAX), replyToData ? replyToData.reply_text : null)
+            .input('replyToUser', sql.NVarChar(255), replyToData ? replyToData.NomeCompleto : null)
+            .query(`
+                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text, reply_to_id, reply_to_message, reply_to_user)
+                OUTPUT INSERTED.Id, INSERTED.created_at
+                VALUES (@feedbackId, @userId, @message, @replyToId, @replyToMessage, @replyToUser)
+            `);
+        
+        const newMessage = result.recordset[0];
+        
+        // Buscar dados completos da nova mensagem
+        const fullMessageResult = await pool.request()
+            .input('messageId', sql.Int, newMessage.Id)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.feedback_id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    fr.reply_to_id,
+                    fr.reply_to_message,
+                    fr.reply_to_user,
+                    COALESCE(u.NomeCompleto, 'Usuário') as user_name,
+                    u.nome as user_first_name
+                FROM FeedbackReplies fr
+                LEFT JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.Id = @messageId
+            `);
+        
+        res.json({ success: true, message: fullMessageResult.recordset[0] });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem:', error);
+        res.status(500).json({ error: 'Erro ao enviar mensagem' });
+    }
+    
+});
+
+// Reagir com emoji a uma mensagem
+app.post('/api/feedbacks/:feedbackId/messages/:messageId/reactions', requireAuth, async (req, res) => {
+    try {
+        const { feedbackId, messageId } = req.params;
+        const { emoji } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!emoji) {
+            return res.status(400).json({ error: 'Emoji é obrigatório' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Garantir que as tabelas existam
+        await ensureChatTablesExist(pool);
+        
+        // Verificar se já reagiu com este emoji
+        const existingReaction = await pool.request()
+            .input('replyId', sql.Int, messageId)
+            .input('userId', sql.Int, userId)
+            .input('emoji', sql.VarChar, emoji)
+            .query(`
+                SELECT Id FROM FeedbackReplyReactions 
+                WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+            `);
+        
+        if (existingReaction.recordset.length > 0) {
+            // Remover reação existente
+            await pool.request()
+                .input('replyId', sql.Int, messageId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    DELETE FROM FeedbackReplyReactions 
+                    WHERE reply_id = @replyId AND user_id = @userId AND emoji = @emoji
+                `);
+            
+            res.json({ success: true, action: 'removed', emoji });
+        } else {
+            // Adicionar nova reação
+            await pool.request()
+                .input('replyId', sql.Int, messageId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    INSERT INTO FeedbackReplyReactions (reply_id, user_id, emoji)
+                    VALUES (@replyId, @userId, @emoji)
+                `);
+            
+            res.json({ success: true, action: 'added', emoji });
+        }
+    } catch (error) {
+        console.error('Erro ao reagir:', error);
+        res.status(500).json({ error: 'Erro ao reagir: ' + error.message });
+    }
+});
+
+// Buscar reações de uma mensagem
+app.get('/api/feedbacks/:feedbackId/messages/:messageId/reactions', requireAuth, async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('replyId', sql.Int, messageId)
+            .query(`
+                SELECT 
+                    frr.emoji,
+                    COUNT(*) as count,
+                    STRING_AGG(u.nome, ', ') as users
+                FROM FeedbackReplyReactions frr
+                JOIN Users u ON frr.user_id = u.Id
+                WHERE frr.reply_id = @replyId
+                GROUP BY frr.emoji
+                ORDER BY count DESC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar reações:', error);
+        res.status(500).json({ error: 'Erro ao buscar reações' });
+    }
+});
+
+// Rota de compatibilidade - buscar mensagens antigas
+app.get('/api/feedbacks/:id/replies', requireAuth, async (req, res) => {
+    // Redirecionar para a nova rota de mensagens
+    req.url = `/api/feedbacks/${req.params.id}/messages`;
+    return app._router.handle(req, res);
+});
+
+// Rota de compatibilidade - enviar resposta antiga
+app.post('/api/feedbacks/:id/reply', requireAuth, async (req, res) => {
+    // Redirecionar para a nova rota de mensagens
+    req.url = `/api/feedbacks/${req.params.id}/messages`;
+    return app._router.handle(req, res);
+});
+
+// Start the server
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    console.log(`📱 Acesse: http://localhost:${PORT}`);
+});
+
+app.get('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se o usuário tem acesso ao feedback
+        const accessCheck = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT Id FROM Feedbacks 
+                WHERE Id = @feedbackId 
+                AND (from_user_id = @userId OR to_user_id = @userId)
+            `);
+        
+        if (accessCheck.recordset.length === 0) {
+            return res.status(403).json({ error: 'Acesso negado a este feedback' });
+        }
+        
+        // Buscar mensagens do chat
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    u.NomeCompleto as user_name,
+                    u.nome as user_first_name
+                FROM FeedbackReplies fr
+                JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.feedback_id = @feedbackId
+                ORDER BY fr.created_at ASC
+            `);
+        
+        // Buscar reações para cada mensagem
+        const messages = [];
+        for (const msg of result.recordset) {
+            const reactionsResult = await pool.request()
+                .input('replyId', sql.Int, msg.Id)
+                .query(`
+                    SELECT 
+                        frr.emoji,
+                        frr.user_id,
+                        u.nome as user_name
+                    FROM FeedbackReplyReactions frr
+                    JOIN Users u ON frr.user_id = u.Id
+                    WHERE frr.reply_id = @replyId
+                    ORDER BY frr.created_at ASC
+                `);
+            
+            messages.push({
+                id: msg.Id,
+                user_id: msg.user_id,
+                message: msg.message,
+                created_at: msg.created_at,
+                user_name: msg.user_name,
+                user_first_name: msg.user_first_name,
+                reactions: reactionsResult.recordset
+            });
+        }
+        
+        res.json(messages);
+    } catch (error) {
+        console.error('Erro ao buscar mensagens do chat:', error);
+        res.status(500).json({ error: 'Erro ao buscar mensagens do chat' });
+    }
+});
+
+// Enviar mensagem no chat
+app.post('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message, reply_to } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!message || message.trim() === '') {
+            return res.status(400).json({ error: 'Mensagem é obrigatória' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se o usuário tem acesso ao feedback
+        const accessCheck = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT Id FROM Feedbacks 
+                WHERE Id = @feedbackId 
+                AND (from_user_id = @userId OR to_user_id = @userId)
+            `);
+        
+        if (accessCheck.recordset.length === 0) {
+            return res.status(403).json({ error: 'Acesso negado a este feedback' });
+        }
+        
+        // Inserir nova mensagem
+        const result = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .input('message', sql.NVarChar(sql.MAX), message.trim())
+            .query(`
+                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text, created_at)
+                OUTPUT INSERTED.Id, INSERTED.created_at
+                VALUES (@feedbackId, @userId, @message, GETDATE())
+            `);
+        
+        const newMessage = result.recordset[0];
+        
+        // Buscar dados completos da nova mensagem
+        const messageResult = await pool.request()
+            .input('messageId', sql.Int, newMessage.Id)
+            .query(`
+                SELECT 
+                    fr.Id,
+                    fr.user_id,
+                    fr.reply_text as message,
+                    fr.created_at,
+                    u.NomeCompleto as user_name,
+                    u.nome as user_first_name
+                FROM FeedbackReplies fr
+                JOIN Users u ON fr.user_id = u.Id
+                WHERE fr.Id = @messageId
+            `);
+        
+        const fullMessage = messageResult.recordset[0];
+        fullMessage.reactions = [];
+        
+        res.json({ success: true, message: fullMessage });
+    } catch (error) {
+        console.error('Erro ao enviar mensagem:', error);
+        res.status(500).json({ error: 'Erro ao enviar mensagem' });
+    }
+});
+
+// Reagir a uma mensagem do chat
+app.post('/api/feedbacks/messages/:messageId/react', requireAuth, async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { emoji } = req.body;
+        const userId = req.session.user.userId;
+        
+        if (!emoji) {
+            return res.status(400).json({ error: 'Emoji é obrigatório' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se a mensagem existe e se o usuário tem acesso
+        const messageCheck = await pool.request()
+            .input('messageId', sql.Int, messageId)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT fr.feedback_id
+                FROM FeedbackReplies fr
+                JOIN Feedbacks f ON fr.feedback_id = f.Id
+                WHERE fr.Id = @messageId
+                AND (f.from_user_id = @userId OR f.to_user_id = @userId)
+            `);
+        
+        if (messageCheck.recordset.length === 0) {
+            return res.status(403).json({ error: 'Acesso negado a esta mensagem' });
+        }
+        
+        // Verificar se já reagiu com este emoji
+        const existingReaction = await pool.request()
+            .input('messageId', sql.Int, messageId)
+            .input('userId', sql.Int, userId)
+            .input('emoji', sql.VarChar, emoji)
+            .query(`
+                SELECT Id FROM FeedbackReplyReactions 
+                WHERE reply_id = @messageId AND user_id = @userId AND emoji = @emoji
+            `);
+        
+        if (existingReaction.recordset.length > 0) {
+            // Remover reação existente
+            await pool.request()
+                .input('messageId', sql.Int, messageId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    DELETE FROM FeedbackReplyReactions 
+                    WHERE reply_id = @messageId AND user_id = @userId AND emoji = @emoji
+                `);
+            
+            res.json({ success: true, action: 'removed', emoji });
+        } else {
+            // Adicionar nova reação
+            await pool.request()
+                .input('messageId', sql.Int, messageId)
+                .input('userId', sql.Int, userId)
+                .input('emoji', sql.VarChar, emoji)
+                .query(`
+                    INSERT INTO FeedbackReplyReactions (reply_id, user_id, emoji, created_at)
+                    VALUES (@messageId, @userId, @emoji, GETDATE())
+                `);
+            
+            res.json({ success: true, action: 'added', emoji });
+        }
+    } catch (error) {
+        console.error('Erro ao reagir à mensagem:', error);
+        res.status(500).json({ error: 'Erro ao reagir à mensagem' });
     }
 });
 
@@ -5842,7 +7062,7 @@ app.get('/api/avaliacoes/:id/resultados', requireAuth, requireManagerAccess, asy
 });
 
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`🌐 Servidor rodando em http://localhost:${PORT}`);
     
     // Iniciar sincronização automática ao iniciar o servidor
     console.log('🚀 Iniciando sincronização automática...');
@@ -5969,7 +7189,7 @@ app.delete('/api/objetivos/:id', requireAuth, async (req, res) => {
 
 // Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+    console.log(`🌐 Servidor rodando em http://localhost:${PORT}`);
     
     // Iniciar sincronização automática
     console.log('🚀 Iniciando sincronização automática...');

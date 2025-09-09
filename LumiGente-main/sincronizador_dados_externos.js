@@ -118,6 +118,7 @@ class SincronizadorDadosExternos {
             await this.syncHierarquia();
             await this.updateExistingUsers();
             await this.updateNullFields();
+            console.log('🎉 Sincronização completa finalizada');
         } catch (error) {
             console.error('❌ Erro na sincronização:', error);
         }
@@ -153,9 +154,14 @@ class SincronizadorDadosExternos {
 
             const funcionarios = funcionariosResult.recordset;
 
-            for (const funcionario of funcionarios) {
-                await this.verificarNovoFuncionario(funcionario);
+            for (let i = 0; i < funcionarios.length; i++) {
+                if (i % 500 === 0) {
+                    console.log(`📊 Processando matrícula ${funcionarios[i].MATRICULA} (${i + 1}/${funcionarios.length})`);
+                }
+                await this.verificarNovoFuncionario(funcionarios[i]);
             }
+            
+            console.log('✅ Sincronização de funcionários concluída');
 
         } catch (error) {
             console.error('❌ Erro ao sincronizar funcionários:', error);
@@ -175,7 +181,7 @@ class SincronizadorDadosExternos {
                 .query(`SELECT Id FROM Users WHERE Matricula = @matricula`);
 
             if (existingUserResult.recordset.length === 0) {
-                console.log(`Novo funcionário: ${funcionario.NOME}`);
+
                 
                 const senhaTemporaria = await this.generateTemporaryPassword();
                 const senhaHash = await require('bcrypt').hash(senhaTemporaria, 10);
@@ -247,9 +253,14 @@ class SincronizadorDadosExternos {
 
             const users = usersResult.recordset;
 
-            for (const user of users) {
-                await this.updateUserData(user);
+            for (let i = 0; i < users.length; i++) {
+                if (i % 500 === 0) {
+                    console.log(`📊 Atualizando usuário ${users[i].Matricula} (${i + 1}/${users.length})`);
+                }
+                await this.updateUserData(users[i]);
             }
+            
+            console.log('✅ Atualização de usuários concluída');
 
         } catch (error) {
             console.error('❌ Erro ao atualizar usuários:', error);
@@ -336,8 +347,16 @@ class SincronizadorDadosExternos {
                 user.Unidade !== funcionario.FILIAL ||
                 user.Cargo !== funcionario.DEPARTAMENTO;
 
+            // Verificar se houve troca de matrícula (efetivação/transferência)
+            const matriculaChanged = user.Matricula !== funcionario.MATRICULA;
+
             if (hasChanges) {
-                console.log(`Atualizando: ${funcionario.NOME}`);
+                // Se houve troca de matrícula, sempre reativar o usuário
+                const shouldReactivate = matriculaChanged && funcionario.STATUS_GERAL === 'ATIVO';
+                
+                if (matriculaChanged) {
+                    console.log(`🔄 Troca de matrícula detectada: ${user.Matricula} → ${funcionario.MATRICULA} (${user.NomeCompleto})`);
+                }
                 
                 await pool.request()
                     .input('userId', sql.Int, user.Id)
@@ -348,6 +367,7 @@ class SincronizadorDadosExternos {
                     .input('hierarchyPath', sql.VarChar, hierarchyPath)
                     .input('unidade', sql.VarChar, funcionario.FILIAL)
                     .input('cargo', sql.VarChar, funcionario.DEPARTAMENTO)
+                    .input('isActive', sql.Bit, shouldReactivate ? 1 : user.IsActive)
                     .query(`
                         UPDATE Users 
                         SET Matricula = @matricula,
@@ -357,9 +377,14 @@ class SincronizadorDadosExternos {
                             HierarchyPath = @hierarchyPath,
                             Unidade = @unidade,
                             Cargo = @cargo,
+                            IsActive = @isActive,
                             updated_at = GETDATE()
                         WHERE Id = @userId
                     `);
+                
+                if (shouldReactivate) {
+                    console.log(`✅ Usuário reativado após troca de matrícula: ${funcionario.NOME}`);
+                }
             }
 
         } catch (error) {

@@ -629,30 +629,136 @@ body {
 
 .feedback-actions {
     display: flex;
-    gap: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 4px;
 }
 
 .action-btn {
     display: flex;
     align-items: center;
-    gap: 4px;
-    background: none;
-    border: none;
-    color: #6b7280;
+    gap: 8px;
+    background: #f8fafc;
+    border: 2px solid #e2e8f0;
+    color: #64748b;
     cursor: pointer;
     font-size: 14px;
-    padding: 4px 8px;
-    border-radius: 4px;
+    padding: 10px 16px;
+    border-radius: 10px;
     transition: all 0.3s ease;
+    font-weight: 600;
+    min-width: 120px;
+    justify-content: flex-start;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .action-btn:hover {
-    color: #f59e0b;
+    color: #0d556d;
+    background: rgba(13, 85, 109, 0.08);
+    border-color: #0d556d;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(13, 85, 109, 0.15);
 }
 
 .action-btn.active {
     color: #f59e0b;
     background: #fef3c7;
+    border-color: #f59e0b;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+}
+
+/* Ícones de status específicos */
+.action-btn.status-visualizado {
+    color: #10b981;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+.action-btn.status-visualizado:hover {
+    color: #059669;
+    background: rgba(16, 185, 129, 0.15);
+    border-color: #10b981;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+.action-btn.status-nao-visualizado {
+    color: #ef4444;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+.action-btn.status-nao-visualizado:hover {
+    color: #dc2626;
+    background: rgba(239, 68, 68, 0.15);
+    border-color: #ef4444;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+}
+
+.action-btn.status-uteis {
+    color: #3b82f6;
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+
+.action-btn.status-uteis:hover {
+    color: #2563eb;
+    background: rgba(59, 130, 246, 0.15);
+    border-color: #3b82f6;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+.action-btn.status-respostas {
+    color: #8b5cf6;
+    background: #faf5ff;
+    border-color: #ddd6fe;
+}
+
+.action-btn.status-respostas:hover {
+    color: #7c3aed;
+    background: rgba(139, 92, 246, 0.15);
+    border-color: #8b5cf6;
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+}
+
+/* Ícones com contadores */
+.action-btn .counter {
+    background: rgba(255, 255, 255, 0.9);
+    color: inherit;
+    padding: 2px 6px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: auto;
+    min-width: 20px;
+    text-align: center;
+}
+
+.action-btn:hover .counter {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+/* Melhorias nos ícones */
+.action-btn i {
+    font-size: 14px;
+    width: 16px;
+    text-align: center;
+}
+
+/* Estados especiais */
+.action-btn.has-activity {
+    position: relative;
+}
+
+.action-btn.has-activity::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    background: #f59e0b;
+    border-radius: 50%;
+    border: 1px solid white;
 }
 
 /* Modals */
@@ -1901,6 +2007,22 @@ body {
     .ranking-stats {
         align-items: flex-start;
         width: 100%;
+    }
+
+    /* Responsividade para ícones de ação */
+    .action-btn {
+        min-width: 80px;
+        font-size: 12px;
+        padding: 6px 10px;
+    }
+
+    .action-btn .counter {
+        font-size: 10px;
+        padding: 1px 4px;
+    }
+
+    .feedback-actions {
+        gap: 8px;
     }
 }
 

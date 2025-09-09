@@ -343,6 +343,7 @@ function setupEventListeners() {
             } else if (tab === 'pesquisas') {
                 loadPesquisas();
                 loadPesquisasFilters();
+                checkPesquisaPermissions();
             }
         });
     });
@@ -560,7 +561,8 @@ async function loadInitialData() {
         loadRecognitions(),
         loadEvaluations(),
         loadUserRankings(),
-        loadGamificationData()
+        loadGamificationData(),
+        checkPesquisaPermissions()
     ]);
 
     // Carregar dados específicos baseado na aba ativa
@@ -789,25 +791,25 @@ function updateFeedbackList(feedbacks) {
             `${feedback.from_name} → Você`;
 
         const actionButtons = currentFeedbackTab === 'sent' ?
-            `<button class="action-btn" title="Visualizações">
+            `<button class="action-btn ${feedback.has_reactions ? 'status-visualizado' : 'status-nao-visualizado'}" title="Status de visualização">
                         <i class="fas fa-eye"></i>
                         ${feedback.has_reactions ? 'Visualizado' : 'Não visualizado'}
                     </button>
-                    <button class="action-btn" title="Reações">
+                    <button class="action-btn status-uteis" title="Reações úteis">
                         <i class="fas fa-thumbs-up"></i>
-                        ${feedback.useful_count || 0} úteis
+                        <span class="counter">${feedback.useful_count || 0}</span> úteis
                     </button>
-                    <button class="action-btn" onclick="toggleReplies(${feedback.Id})" title="Respostas">
+                    <button class="action-btn status-respostas ${feedback.replies_count > 0 ? 'has-activity' : ''}" onclick="toggleReplies(${feedback.Id})" title="Respostas">
                         <i class="fas fa-comment"></i>
-                        ${feedback.replies_count || 0} respostas
+                        <span class="counter">${feedback.replies_count || 0}</span> respostas
                     </button>` :
-            `<button class="action-btn" onclick="toggleReaction(${feedback.Id}, 'useful')" data-feedback-id="${feedback.Id}" data-reaction="useful">
+            `<button class="action-btn status-uteis ${feedback.user_reacted ? 'active' : ''}" onclick="toggleReaction(${feedback.Id}, 'useful')" data-feedback-id="${feedback.Id}" data-reaction="useful" title="Marcar como útil">
                         <i class="fas fa-thumbs-up"></i>
-                        Útil (${feedback.useful_count || 0})
+                        Útil <span class="counter">${feedback.useful_count || 0}</span>
                     </button>
-                    <button class="action-btn" onclick="toggleReplies(${feedback.Id})">
+                    <button class="action-btn status-respostas ${feedback.replies_count > 0 ? 'has-activity' : ''}" onclick="toggleReplies(${feedback.Id})" title="Responder feedback">
                         <i class="fas fa-comment"></i>
-                        Responder (${feedback.replies_count || 0})
+                        Responder <span class="counter">${feedback.replies_count || 0}</span>
                     </button>`;
 
         return `
@@ -833,13 +835,7 @@ function updateFeedbackList(feedbacks) {
                             ${actionButtons}
                         </div>
                         <div class="feedback-replies hidden" id="replies-${feedback.Id}">
-                            <div class="replies-list" id="replies-list-${feedback.Id}"></div>
-                            ${currentFeedbackTab === 'received' ? `
-                                <div class="reply-form">
-                                    <input type="text" class="reply-input" placeholder="Escreva uma resposta..." id="reply-input-${feedback.Id}">
-                                    <button class="reply-btn" onclick="submitReply(${feedback.Id})">Enviar</button>
-                                </div>
-                            ` : ''}
+                            <!-- Container para thread será criado dinamicamente -->
                         </div>
                     </div>
                 `;
@@ -1324,70 +1320,12 @@ async function toggleReaction(feedbackId, reactionType) {
     }
 }
 
-// Reply functions
-async function toggleReplies(feedbackId) {
-    const repliesContainer = document.getElementById(`replies-${feedbackId}`);
-    const isHidden = repliesContainer.classList.contains('hidden');
-
-    if (isHidden) {
-        repliesContainer.classList.remove('hidden');
-        await loadReplies(feedbackId);
+// Sistema de Chat Melhorado
+function toggleReplies(feedbackId) {
+    if (window.feedbackChat) {
+        window.feedbackChat.openChat(feedbackId);
     } else {
-        repliesContainer.classList.add('hidden');
-    }
-}
-
-async function loadReplies(feedbackId) {
-    try {
-        const response = await fetch(`/api/feedbacks/${feedbackId}/replies`);
-        if (response.ok) {
-            const replies = await response.json();
-            const container = document.getElementById(`replies-list-${feedbackId}`);
-
-            container.innerHTML = replies.map(reply => `
-                        <div class="reply-item">
-                            <div class="reply-avatar">
-                                <i class="fas fa-user"></i>
-                            </div>
-                            <div class="reply-content">
-                                <div class="reply-author">${reply.user_name}</div>
-                                <div class="reply-message">${reply.message}</div>
-                                <div class="reply-date">${new Date(reply.created_at).toLocaleDateString('pt-BR')}</div>
-                            </div>
-                        </div>
-                    `).join('');
-        }
-    } catch (error) {
-        console.error('Erro ao carregar respostas:', error);
-    }
-}
-
-async function submitReply(feedbackId) {
-    const input = document.getElementById(`reply-input-${feedbackId}`);
-    const message = input.value.trim();
-
-    if (!message) {
-        alert('Digite uma mensagem');
-        return;
-    }
-
-    try {
-        const response = await fetch(`/api/feedbacks/${feedbackId}/reply`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ message })
-        });
-
-        if (response.ok) {
-            input.value = '';
-            await loadReplies(feedbackId);
-        } else {
-            alert('Erro ao enviar resposta');
-        }
-    } catch (error) {
-        console.error('Erro ao enviar resposta:', error);
-        alert('Erro ao enviar resposta');
+        console.error('Sistema de chat não carregado');
     }
 }
 
@@ -2631,6 +2569,22 @@ function updateObjetivosFilters(filters) {
 
 // ===== FUNÇÕES DE PESQUISA RÁPIDA =====
 
+// Verificar permissões para criar pesquisas
+async function checkPesquisaPermissions() {
+    try {
+        const response = await fetch('/api/pesquisas/can-create');
+        if (response.ok) {
+            const data = await response.json();
+            const novaPesquisaBtn = document.getElementById('nova-pesquisa-btn');
+            if (novaPesquisaBtn) {
+                novaPesquisaBtn.style.display = data.canCreate ? 'inline-block' : 'none';
+            }
+        }
+    } catch (error) {
+        console.error('Erro ao verificar permissões de pesquisa:', error);
+    }
+}
+
 // Carregar pesquisas
 async function loadPesquisas() {
     try {
@@ -2696,12 +2650,12 @@ function updatePesquisasList(pesquisas) {
                                     Responder
                                 </button>
                             ` : ''}
-                            <button class="btn btn-sm btn-secondary" onclick="viewPesquisaResultados(${pesquisa.Id})">
+                            <button class="btn btn-sm btn-secondary" onclick="viewPesquisaResultados(${pesquisa.Id})" style="display: none;" id="resultados-btn-${pesquisa.Id}">
                                 <i class="fas fa-chart-bar"></i>
                                 Resultados
                             </button>
-                            ${pesquisa.criado_por === currentUser.userId && isAtiva ? `
-                                <button class="btn btn-sm btn-danger" onclick="encerrarPesquisa(${pesquisa.Id})">
+                            ${isAtiva ? `
+                                <button class="btn btn-sm btn-danger" onclick="encerrarPesquisa(${pesquisa.Id})" style="display: none;" id="encerrar-btn-${pesquisa.Id}">
                                     <i class="fas fa-stop"></i>
                                     Encerrar
                                 </button>
@@ -2710,6 +2664,22 @@ function updatePesquisasList(pesquisas) {
                     </div>
                 `;
     }).join('');
+    
+    // Verificar se é RH para mostrar botões de resultados e encerrar
+    fetch('/api/pesquisas/can-create')
+        .then(response => response.json())
+        .then(data => {
+            if (data.canCreate) {
+                // Mostrar botões para usuários do RH
+                pesquisas.forEach(pesquisa => {
+                    const resultadosBtn = document.getElementById(`resultados-btn-${pesquisa.Id}`);
+                    const encerrarBtn = document.getElementById(`encerrar-btn-${pesquisa.Id}`);
+                    if (resultadosBtn) resultadosBtn.style.display = 'inline-block';
+                    if (encerrarBtn) encerrarBtn.style.display = 'inline-block';
+                });
+            }
+        })
+        .catch(error => console.error('Erro ao verificar permissões RH:', error));
 }
 
 function getTipoPerguntaLabel(tipo) {
@@ -2722,8 +2692,23 @@ function getTipoPerguntaLabel(tipo) {
 }
 
 // Modal de pesquisa
-function openPesquisaModal() {
-    window.open('/criar-pesquisa.html', '_blank');
+async function openPesquisaModal() {
+    try {
+        const response = await fetch('/api/pesquisas/can-create');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.canCreate) {
+                window.open('/criar-pesquisa.html', '_blank');
+            } else {
+                alert('Acesso negado. Apenas usuários do RH e Treinamento & Desenvolvimento podem criar pesquisas.');
+            }
+        } else {
+            alert('Erro ao verificar permissões.');
+        }
+    } catch (error) {
+        console.error('Erro ao verificar permissões:', error);
+        alert('Erro ao verificar permissões.');
+    }
 }
 
 function closePesquisaModal() {
@@ -2903,7 +2888,20 @@ async function submitRespostaPesquisa() {
 }
 
 function viewPesquisaResultados(pesquisaId) {
-    window.open(`/resultados-pesquisa.html?id=${pesquisaId}`, '_blank');
+    // Verificar se usuário é do RH antes de abrir resultados
+    fetch('/api/pesquisas/can-create')
+        .then(response => response.json())
+        .then(data => {
+            if (data.canCreate) {
+                window.open(`/resultados-pesquisa.html?id=${pesquisaId}`, '_blank');
+            } else {
+                alert('Apenas usuários do RH podem visualizar os resultados das pesquisas.');
+            }
+        })
+        .catch(error => {
+            console.error('Erro ao verificar permissões:', error);
+            alert('Erro ao verificar permissões.');
+        });
 }
 
 function showPesquisaResultados(data) {

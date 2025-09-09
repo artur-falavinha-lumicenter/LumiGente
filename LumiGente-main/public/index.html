@@ -6,6 +6,8 @@
     <title>Painel de Feedback - LumiGente</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="styles/index.css">
+    <link rel="stylesheet" href="styles/feedback-chat.css">
+    <script src="js/feedback-chat.js"></script>
 </head>
 <body>
     <div class="container">
@@ -703,7 +705,7 @@
                                 </div>
                             </div>
                         </div>
-                        <button class="btn btn-amber" onclick="openPesquisaModal()">
+                        <button class="btn btn-amber" onclick="openPesquisaModal()" id="nova-pesquisa-btn" style="display: none;">
                             <i class="fas fa-plus"></i>
                             Nova Pesquisa
                         </button>
@@ -1201,8 +1203,17 @@
         </div>
     </div>
 
-    <script src="js/index.js"></script>
     <!-- Scripts principais -->
+    <script src="js/feedback-chat.js"></script>
+    <script>
+        // Inicializar sistema de chat globalmente
+        window.feedbackChat = new FeedbackChat();
+        
+        // Função global para compatibilidade
+        window.toggleFeedbackChat = function(feedbackId) {
+            window.feedbackChat.openChat(feedbackId);
+        };
+    </script>
     <script src="js/index.js"></script>
 </body>
 </html>

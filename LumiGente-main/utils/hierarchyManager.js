@@ -18,17 +18,13 @@ class HierarchyManager {
         
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`🔌 Tentativa ${attempt}/${maxRetries} de conexão com banco de dados...`);
                 const pool = await sql.connect(config);
-                console.log('✅ Conexão com banco de dados estabelecida com sucesso');
                 return pool;
             } catch (error) {
                 lastError = error;
-                console.error(`❌ Tentativa ${attempt} falhou:`, error.message);
                 
                 if (attempt < maxRetries) {
-                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Exponential backoff
-                    console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
+                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
@@ -44,15 +40,14 @@ class HierarchyManager {
         try {
             return await this.connectWithRetry(this.dbConfig);
         } catch (error) {
-            console.log('🔄 Tentando configuração alternativa...');
             try {
                 // Configuração alternativa para fallback
                 const dbConfigFallback = {
                     ...this.dbConfig,
                     options: {
                         ...this.dbConfig.options,
-                        requestTimeout: 60000, // 60 segundos para requests
-                        connectionTimeout: 60000, // 60 segundos para conexão
+                        requestTimeout: 60000,
+                        connectionTimeout: 60000,
                         pool: {
                             max: 5,
                             min: 0,
@@ -62,7 +57,6 @@ class HierarchyManager {
                 };
                 return await this.connectWithRetry(dbConfigFallback);
             } catch (fallbackError) {
-                console.error('❌ Ambas as configurações falharam:', fallbackError.message);
                 throw fallbackError;
             }
         }
@@ -74,8 +68,6 @@ class HierarchyManager {
      * @returns {Promise<Object>} - Objeto com nível e caminho hierárquico
      */
     async getHierarchyLevel(matricula) {
-        console.log(`=== getHierarchyLevel chamado para matrícula: ${matricula} ===`);
-        
         try {
             const pool = await this.getDatabasePool();
             
@@ -90,7 +82,6 @@ class HierarchyManager {
                 `);
             
             if (funcionarioResult.recordset.length === 0) {
-                console.log(`Nenhum funcionário encontrado para matrícula ${matricula}`);
                 return {
                     level: 0,
                     path: '',
@@ -99,7 +90,6 @@ class HierarchyManager {
             }
             
             const funcionario = funcionarioResult.recordset[0];
-            console.log(`Dados do funcionário:`, funcionario);
             
             // Buscar hierarquia onde o funcionário é responsável
             const hierarquiaResult = await pool.request()
@@ -112,23 +102,18 @@ class HierarchyManager {
                     ORDER BY LEN(HIERARQUIA_COMPLETA) DESC
                 `);
             
-            console.log(`Hierarquia onde é responsável:`, hierarquiaResult.recordset);
-            
             let level = 0;
             let path = '';
             let departamento = funcionario.DEPARTAMENTO || 'Não definido';
             
             if (hierarquiaResult.recordset.length > 0) {
                 const hierarquia = hierarquiaResult.recordset[0];
-                console.log(`Funcionário é responsável por:`, hierarquia);
                 
                 // O funcionário é responsável por este departamento
                 level = 4; // Gerente/Supervisor
                 path = hierarquia.HIERARQUIA_COMPLETA;
                 departamento = hierarquia.DESCRICAO_ATUAL;
             } else {
-                console.log(`Funcionário não é responsável, buscando onde trabalha...`);
-                
                 // Se não é responsável, buscar onde ele trabalha usando o DEPARTAMENTO (com TRIM)
                 const hierarquiaTrabalhoResult = await pool.request()
                     .input('deptoAtual', sql.VarChar, funcionario.DEPARTAMENTO)
@@ -140,17 +125,13 @@ class HierarchyManager {
                         ORDER BY LEN(HIERARQUIA_COMPLETA) DESC
                     `);
                 
-                console.log(`Hierarquia onde trabalha:`, hierarquiaTrabalhoResult.recordset);
-                
                 if (hierarquiaTrabalhoResult.recordset.length > 0) {
                     const hierarquiaTrabalho = hierarquiaTrabalhoResult.recordset[0];
-                    console.log(`Funcionário trabalha em:`, hierarquiaTrabalho);
                     
                     // LÓGICA ESPECIAL: Se trabalha em GERENCIA TI, é gestor
                     if (hierarquiaTrabalho.DESCRICAO_ATUAL && 
                         hierarquiaTrabalho.DESCRICAO_ATUAL.includes('GERENCIA TI')) {
                         level = 4; // Gerente TI
-                        console.log(`🎯 Usuário ${matricula} reconhecido como Gerente TI`);
                     } else {
                         level = 0; // Funcionário comum
                     }
@@ -158,21 +139,12 @@ class HierarchyManager {
                     path = hierarquiaTrabalho.HIERARQUIA_COMPLETA;
                     departamento = hierarquiaTrabalho.DESCRICAO_ATUAL;
                 } else {
-                    console.log(`Não encontrou hierarquia para departamento: ${funcionario.DEPARTAMENTO}`);
-                    
                     // Se não encontrou na hierarquia, usar dados básicos
                     level = 0;
                     path = '';
                     departamento = funcionario.DEPARTAMENTO || 'Não definido';
                 }
             }
-
-            console.log(`Resultado final para ${matricula}:`, {
-                level,
-                path,
-                departamento,
-                departamentoOriginal: funcionario.DEPARTAMENTO
-            });
 
             return {
                 level,
