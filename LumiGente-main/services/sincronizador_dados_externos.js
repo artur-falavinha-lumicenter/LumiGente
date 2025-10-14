@@ -11,7 +11,7 @@
  */
 
 const sql = require('mssql');
-const HierarchyManager = require('./utils/hierarchyManager');
+const HierarchyManager = require('../utils/hierarchyManager');
 
 class SincronizadorDadosExternosV2 {
     constructor(dbConfig) {

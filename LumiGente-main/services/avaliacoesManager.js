@@ -11,7 +11,7 @@
  */
 
 const sql = require('mssql');
-const { getHierarchyLevel } = require('./hierarchyHelper');
+const { getHierarchyLevel } = require('../utils/hierarchyHelper');
 
 /**
  * Verifica todos os funcionários e cria avaliações quando necessário
@@ -790,4 +790,3 @@ module.exports = {
     concluirAvaliacao,
     atualizarQuestionarioPadrao
 };
-
