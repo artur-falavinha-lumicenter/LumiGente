@@ -57,13 +57,28 @@ function validarCPF(cpf) {
     return parseInt(cpf.charAt(9)) === dv1 && parseInt(cpf.charAt(10)) === dv2;
 }
 
-// Aplicar formatação nos campos CPF
+// Aplicar formatação nos campos CPF e limpar mensagens
 document.getElementById('loginCpf').addEventListener('input', function (e) {
     e.target.value = formatarCPF(e.target.value);
+    hideMessages(); // Limpar mensagens quando usuário digitar
 });
 
 document.getElementById('registerCpf').addEventListener('input', function (e) {
     e.target.value = formatarCPF(e.target.value);
+    hideMessages(); // Limpar mensagens quando usuário digitar
+});
+
+// Limpar mensagens quando usuário digitar nos campos de senha
+document.getElementById('loginPassword').addEventListener('input', function (e) {
+    hideMessages();
+});
+
+document.getElementById('registerPassword').addEventListener('input', function (e) {
+    hideMessages();
+});
+
+document.getElementById('confirmPassword').addEventListener('input', function (e) {
+    hideMessages();
 });
 
 // Toggle entre formulários
@@ -139,7 +154,7 @@ document.getElementById('loginForm').addEventListener('submit', async function (
 
         const data = await response.json();
 
-        if (response.ok) {
+        if (response.ok && data.success !== false) {
             showMessage('success', 'Login realizado com sucesso!');
             // Limpar flags de logout/sessão invalidada
             sessionStorage.removeItem('logoutByButton');
@@ -153,7 +168,12 @@ document.getElementById('loginForm').addEventListener('submit', async function (
             }, 1000);
         } else {
             if (data.userNotFound) {
-                showMessage('info', 'Usuário não encontrado. Faça seu cadastro primeiro.');
+                showMessage('error', 'CPF não encontrado.');
+            } else if (data.needsRegistration) {
+                showMessage('info', 'Você não possui cadastro ainda. Crie uma conta primeiro.');
+                // Mostrar seção de cadastro
+                document.getElementById('loginForm').style.display = 'none';
+                document.getElementById('registerForm').style.display = 'block';
             } else {
                 showMessage('error', data.error || 'Erro no login');
             }
@@ -186,16 +206,22 @@ document.getElementById('registerForm').addEventListener('submit', async functio
 
     if (!validarCPF(cpf)) {
         showMessage('error', 'CPF inválido');
+        isRegistering = false;
+        submitButton.disabled = false;
         return;
     }
 
     if (password.length < 6) {
         showMessage('error', 'A senha deve ter pelo menos 6 caracteres');
+        isRegistering = false;
+        submitButton.disabled = false;
         return;
     }
 
     if (password !== confirmPassword) {
         showMessage('error', 'As senhas não coincidem');
+        isRegistering = false;
+        submitButton.disabled = false;
         return;
     }
 
@@ -216,12 +242,16 @@ document.getElementById('registerForm').addEventListener('submit', async functio
         if (checkData.exists) {
             showMessage('error', 'CPF já cadastrado no sistema');
             hideLoading();
+            isRegistering = false;
+            submitButton.disabled = false;
             return;
         }
 
         if (!checkData.employee) {
             showMessage('error', checkData.message || 'CPF não encontrado na base de funcionários');
             hideLoading();
+            isRegistering = false;
+            submitButton.disabled = false;
             return;
         }
 

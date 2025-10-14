@@ -1,0 +1,15 @@
+<service>
+    <id>LumiGente</id>
+    <!-- Display name of the service -->
+    <name>LumiGente</name>
+    <!-- Service description -->
+    <description>Sistema de Feedbacks</description>
+    <executable>"C:\Program Files\nodejs\node.exe"</executable>
+    <workingdirectory>C:\inetpub\LumiGente\LumiGente-main</workingdirectory>
+    <arguments>server.js</arguments>
+    <env name="PORT" value="3057" />
+    <log mode="roll-by-time">
+        <pattern>yyyy-MM-dd</pattern>
+    </log>
+    <onfailure action="restart" delay="10 sec"/>
+</service>

@@ -1,0 +1,629 @@
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+Erro ao buscar avaliação: RequestError: Validation failed for parameter 'avaliacaoId'. Invalid number.
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\request.js:449:19
+    at Array.forEach (<anonymous>)
+    at Request.userCallback (C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\request.js:446:46)
+    at Request.callback (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\request.js:239:14)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1634:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EPARAM',
+  originalError: RequestError: Validation failed for parameter 'avaliacaoId'. Invalid number.
+      at Request.validateParameters (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\request.js:331:15)
+      at Connection.execSql (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1629:15)
+      ... 2 lines matching cause stack trace ...
+      at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+    code: 'EPARAM',
+    [cause]: TypeError: Invalid number.
+        at Object.validate (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\data-types\int.js:43:13)
+        at Request.validateParameters (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\request.js:329:42)
+        at Connection.execSql (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1629:15)
+        at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\request.js:705:65
+        at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\base\connection-pool.js:371:41
+        at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+  },
+  number: 'EPARAM',
+  lineNumber: undefined,
+  state: undefined,
+  class: undefined,
+  serverName: undefined,
+  procName: undefined,
+  precedingErrors: []
+}
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+Erro no login: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}
+❌ Tabela AvaliacoesPeriodicas não existe: Invalid object name 'AvaliacoesPeriodicas'.
+❌ Erro ao atualizar status das pesquisas: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\mssql\lib\tedious\connection-pool.js:85:17
+    at Connection.onConnect (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:849:9)
+    at Object.onceWrapper (node:events:633:26)
+    at Connection.emit (node:events:518:28)
+    at Connection.emit (C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:970:18)
+    at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+  code: 'EINSTLOOKUP',
+  originalError: ConnectionError: getaddrinfo ENOTFOUND lmc00sv006
+      at C:\inetpub\LumiGente\LumiGente-main\node_modules\tedious\lib\connection.js:1006:32
+      at process.processTicksAndRejections (node:internal/process/task_queues:85:11) {
+    code: 'EINSTLOOKUP',
+    [cause]: Error: getaddrinfo ENOTFOUND lmc00sv006
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26) {
+      errno: -3008,
+      code: 'ENOTFOUND',
+      syscall: 'getaddrinfo',
+      hostname: 'lmc00sv006'
+    }
+  }
+}

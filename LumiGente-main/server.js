@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const path = require('path');
 const sql = require('mssql');
 
@@ -16,8 +16,57 @@ function requireAuth(req, res, next) {
 }
 
 // Lazy loading para módulos não essenciais na inicialização
-let cors, bcrypt, validator, session;
-let HierarchyManager, SincronizadorDadosExternos, AnalyticsManager;
+let cors, bcrypt, validator, session, schedule;
+let HierarchyManager, SincronizadorDadosExternos, AnalyticsManager, AvaliacoesManager;
+let { spawn } = require('child_process');
+
+// Importar função para calcular HierarchyLevel
+const { getHierarchyLevel } = require('./utils/hierarchyHelper');
+
+// Função para verificar e corrigir estrutura da tabela Users
+async function verificarEstruturaTabelaUsers() {
+    try {
+        const pool = await getDatabasePool();
+        
+        // Verificar se a coluna PasswordHash existe e tem tamanho suficiente
+        const checkColumnResult = await pool.request()
+            .query(`
+                SELECT 
+                    COLUMN_NAME,
+                    DATA_TYPE,
+                    CHARACTER_MAXIMUM_LENGTH,
+                    IS_NULLABLE
+                FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_NAME = 'Users' AND COLUMN_NAME = 'PasswordHash'
+            `);
+        
+        if (checkColumnResult.recordset.length === 0) {
+            console.log('⚠️ Coluna PasswordHash não encontrada. Criando...');
+            await pool.request()
+                .query(`
+                    ALTER TABLE Users 
+                    ADD PasswordHash VARCHAR(255) NULL
+                `);
+            console.log('✅ Coluna PasswordHash criada com sucesso');
+        } else {
+            const column = checkColumnResult.recordset[0];
+            
+            // Verificar se o tamanho é suficiente (bcrypt gera hashes de ~60 caracteres)
+            if (column.CHARACTER_MAXIMUM_LENGTH < 255) {
+                console.log('⚠️ Tamanho da coluna PasswordHash pode ser insuficiente. Atualizando...');
+                await pool.request()
+                    .query(`
+                        ALTER TABLE Users 
+                        ALTER COLUMN PasswordHash VARCHAR(255)
+                    `);
+                console.log('✅ Tamanho da coluna PasswordHash atualizado para 255 caracteres');
+            }
+        }
+        
+    } catch (error) {
+        console.error('❌ Erro ao verificar estrutura da tabela Users:', error);
+    }
+}
 
 // Função para carregar dependências quando necessário
 function loadDependencies() {
@@ -26,10 +75,314 @@ function loadDependencies() {
         bcrypt = require('bcrypt');
         validator = require('validator');
         session = require('express-session');
+        schedule = require('node-schedule');
         HierarchyManager = require('./utils/hierarchyManager');
         SincronizadorDadosExternos = require('./sincronizador_dados_externos');
         AnalyticsManager = require('./utils/analyticsManager');
+        AvaliacoesManager = require('./utils/avaliacoesManager');
     }
+}
+
+// Função para verificar se o usuário é gestor baseado na HIERARQUIA_CC e HierarchyPath
+async function isUserManager(user) {
+    try {
+        const pool = await sql.connect(dbConfig);
+        
+        console.log(`🔍 Verificando se usuário é gestor: CPF = ${user.CPF}, Nome = ${user.nomeCompleto || user.NomeCompleto}, Departamento = ${user.Departamento || user.departamento}`);
+        
+        // Verificar se o usuário aparece como CPF_RESPONSAVEL na HIERARQUIA_CC (gestor direto)
+        const directManagerResult = await pool.request()
+            .input('cpf', sql.VarChar, user.CPF)
+            .query(`
+                SELECT 
+                    COUNT(*) as count
+                FROM HIERARQUIA_CC 
+                WHERE CPF_RESPONSAVEL = @cpf
+            `);
+        
+        const isDirectManager = directManagerResult.recordset[0].count > 0;
+        
+        // Verificar se o usuário está em um nível superior da hierarquia
+        // Buscar o departamento do usuário na HIERARQUIA_CC
+        const userDeptResult = await pool.request()
+            .input('departamento', sql.VarChar, user.Departamento || user.departamento)
+            .query(`
+                SELECT DISTINCT HIERARQUIA_COMPLETA, FILIAL
+                FROM HIERARQUIA_CC 
+                WHERE DEPTO_ATUAL = @departamento
+            `);
+        
+        let isUpperManager = false;
+        
+        // Se o usuário tem departamento na hierarquia, verificar se outros departamentos
+        // têm esse departamento em sua hierarquia (ou seja, são subordinados)
+        if (userDeptResult.recordset.length > 0) {
+            const userHierarchies = userDeptResult.recordset;
+            
+            for (const userHier of userHierarchies) {
+                const userDept = user.Departamento || user.departamento;
+                
+                // Verificar se existem departamentos que têm este departamento na hierarquia
+                const subordinatesResult = await pool.request()
+                    .input('departamento', sql.VarChar, userDept)
+                    .input('filial', sql.VarChar, userHier.FILIAL)
+                    .query(`
+                        SELECT COUNT(*) as count
+                        FROM HIERARQUIA_CC 
+                        WHERE HIERARQUIA_COMPLETA LIKE '%' + @departamento + '%'
+                        AND FILIAL = @filial
+                        AND DEPTO_ATUAL != @departamento
+                    `);
+                
+                if (subordinatesResult.recordset[0].count > 0) {
+                    isUpperManager = true;
+                    console.log(`👨‍💼 Usuário é gestor de nível superior - departamento ${userDept} está na hierarquia de outros departamentos`);
+                    break;
+                }
+            }
+        }
+        
+        const isManager = isDirectManager || isUpperManager;
+        
+        console.log(`🔍 Resultado da verificação: isDirectManager = ${isDirectManager}, isUpperManager = ${isUpperManager}, isManager = ${isManager}`);
+        
+        if (isManager) {
+            // Buscar departamentos gerenciados
+            const deptoResult = await pool.request()
+                .input('cpf', sql.VarChar, user.CPF)
+                .query(`
+                    SELECT DISTINCT DEPTO_ATUAL
+                    FROM HIERARQUIA_CC 
+                    WHERE CPF_RESPONSAVEL = @cpf
+                `);
+            
+            if (deptoResult.recordset.length > 0) {
+                const departamentos = deptoResult.recordset.map(r => r.DEPTO_ATUAL).join(', ');
+                console.log(`👨‍💼 Usuário ${user.nomeCompleto || user.NomeCompleto} é gestor direto de: ${departamentos}`);
+            }
+        } else {
+            console.log(`👥 Usuário ${user.nomeCompleto || user.NomeCompleto} não é gestor`);
+        }
+        
+        return isManager;
+    } catch (error) {
+        console.error('Erro ao verificar se usuário é gestor:', error);
+        return false;
+    }
+}
+
+// Função para obter informações detalhadas da hierarquia do usuário
+async function getUserHierarchyInfo(user) {
+    try {
+        const pool = await sql.connect(dbConfig);
+        
+        // 1. Buscar departamentos onde o usuário é responsável direto
+        const directResult = await pool.request()
+            .input('cpf', sql.VarChar, user.CPF)
+            .query(`
+                SELECT 
+                    DEPTO_ATUAL,
+                    DESCRICAO_ATUAL,
+                    HIERARQUIA_COMPLETA,
+                    RESPONSAVEL_ATUAL,
+                    CPF_RESPONSAVEL,
+                    FILIAL,
+                    'DIRETO' as TIPO_GESTAO
+                FROM HIERARQUIA_CC 
+                WHERE CPF_RESPONSAVEL = @cpf
+            `);
+        
+        let allManagedDepts = [...directResult.recordset];
+        
+        // 2. Buscar departamentos subordinados (onde o departamento do usuário está na hierarquia)
+        const userDept = user.Departamento || user.departamento;
+        
+        if (userDept) {
+            const subordinatesResult = await pool.request()
+                .input('departamento', sql.VarChar, userDept)
+                .query(`
+                    SELECT 
+                        DEPTO_ATUAL,
+                        DESCRICAO_ATUAL,
+                        HIERARQUIA_COMPLETA,
+                        RESPONSAVEL_ATUAL,
+                        CPF_RESPONSAVEL,
+                        FILIAL,
+                        'HIERARQUIA' as TIPO_GESTAO
+                    FROM HIERARQUIA_CC 
+                    WHERE HIERARQUIA_COMPLETA LIKE '%' + @departamento + '%'
+                    AND DEPTO_ATUAL != @departamento
+                `);
+            
+            // Adicionar departamentos subordinados que não sejam gerenciados diretamente
+            for (const subDept of subordinatesResult.recordset) {
+                const alreadyExists = allManagedDepts.some(d => 
+                    d.DEPTO_ATUAL === subDept.DEPTO_ATUAL && d.FILIAL === subDept.FILIAL
+                );
+                if (!alreadyExists) {
+                    allManagedDepts.push(subDept);
+                }
+            }
+        }
+        
+        // Ordenar por comprimento da hierarquia (mais profundo primeiro)
+        allManagedDepts.sort((a, b) => b.HIERARQUIA_COMPLETA.length - a.HIERARQUIA_COMPLETA.length);
+        
+        console.log(`📊 Departamentos gerenciados por ${user.nomeCompleto || user.NomeCompleto}:`);
+        console.log(`   - Gestão direta: ${directResult.recordset.length} departamentos`);
+        console.log(`   - Total (incluindo hierarquia): ${allManagedDepts.length} departamentos`);
+        
+        return allManagedDepts;
+    } catch (error) {
+        console.error('Erro ao buscar informações hierárquicas:', error);
+        return [];
+    }
+}
+
+// Função para determinar permissões de acesso às abas baseado na hierarquia e departamento
+async function getUserTabPermissions(user) {
+    const departmentCode = user.Departamento;
+    
+    console.log(`🔍 Analisando permissões para usuário: ${user.nomeCompleto || user.NomeCompleto}, Departamento: ${departmentCode}`);
+    
+    // Departamentos com acesso total (todas as abas)
+    const fullAccessDepartments = [
+        '122134101', // COORDENACAO ADM/RH/SESMT MAO (código antigo)
+        '000122134', // COORDENACAO ADM/RH/SESMT MAO (código correto)
+        '121411100', // DEPARTAMENTO TREINAM&DESENVOLV
+        '000121511', // SUPERVISAO RH
+        '121511100'  // DEPARTAMENTO RH
+    ];
+    
+    console.log(`🔍 Departamentos com acesso total: ${fullAccessDepartments.join(', ')}`);
+    
+    // Verificar se usuário é de departamento com acesso total
+    if (fullAccessDepartments.includes(departmentCode)) {
+        console.log(`✅ Usuário tem acesso total (RH/T&D): ${departmentCode}`);
+        console.log(`   🔓 Liberando acesso a TODAS as abas (incluindo Histórico)`);
+        
+        // Buscar informações de hierarquia mesmo para usuários de RH/T&D
+        const isManager = await isUserManager(user);
+        const hierarchyInfo = await getUserHierarchyInfo(user);
+        
+        // Determinar nível hierárquico
+        let hierarchyLevel = 1;
+        if (hierarchyInfo.length > 0) {
+            const longestPath = hierarchyInfo.reduce((prev, current) => 
+                current.HIERARQUIA_COMPLETA.length > prev.HIERARQUIA_COMPLETA.length ? current : prev
+            );
+            const levels = longestPath.HIERARQUIA_COMPLETA.split(' > ').length;
+            hierarchyLevel = levels;
+            console.log(`   📊 Nível hierárquico: ${hierarchyLevel}, Departamentos gerenciados: ${hierarchyInfo.length}`);
+        }
+        
+        return {
+            dashboard: true,
+            feedbacks: true,
+            recognitions: true,
+            humor: true,
+            objetivos: true,
+            pesquisas: true,
+            avaliacoes: true,
+            team: true,
+            analytics: true,
+            historico: true,
+            isManager: true,
+            isFullAccess: true,
+            managerType: 'RH/T&D',
+            hierarchyLevel: hierarchyLevel,
+            managedDepartments: hierarchyInfo.map(h => h.DEPTO_ATUAL),
+            managedDepartmentsDetails: hierarchyInfo.map(h => ({
+                departamento: h.DEPTO_ATUAL,
+                descricao: h.DESCRICAO_ATUAL,
+                filial: h.FILIAL,
+                hierarquia: h.HIERARQUIA_COMPLETA,
+                tipoGestao: h.TIPO_GESTAO
+            })),
+            hierarchyPaths: hierarchyInfo.map(h => h.HIERARQUIA_COMPLETA)
+        };
+    }
+    
+    // Verificar se usuário é gestor baseado na HIERARQUIA_CC
+    const isManager = await isUserManager(user);
+    const hierarchyInfo = isManager ? await getUserHierarchyInfo(user) : [];
+    
+    if (isManager) {
+        // Analisar o HierarchyPath para determinar o nível de gestão
+        let managerType = 'Gestor';
+        let hierarchyLevel = 1;
+        
+        if (hierarchyInfo.length > 0) {
+            // Analisar o HierarchyPath mais longo para determinar o nível
+            const longestPath = hierarchyInfo.reduce((prev, current) => 
+                current.HIERARQUIA_COMPLETA.length > prev.HIERARQUIA_COMPLETA.length ? current : prev
+            );
+            
+            // Contar níveis na hierarquia (separados por ' > ')
+            const levels = longestPath.HIERARQUIA_COMPLETA.split(' > ').length;
+            hierarchyLevel = levels;
+            
+            if (levels >= 4) {
+                managerType = 'Diretor/Gerente Geral';
+            } else if (levels >= 3) {
+                managerType = 'Gerente';
+            } else if (levels >= 2) {
+                managerType = 'Supervisor/Coordenador';
+            }
+        }
+        
+        console.log(`👨‍💼 ${user.nomeCompleto || user.NomeCompleto} identificado como ${managerType} (nível ${hierarchyLevel})`);
+        console.log(`   📋 Gerencia ${hierarchyInfo.length} departamento(s)`);
+        
+        // Gestores - todas as abas exceto Histórico
+        return {
+            dashboard: true,
+            feedbacks: true,
+            recognitions: true,
+            humor: true,
+            objetivos: true,
+            pesquisas: true,
+            avaliacoes: true,
+            team: true,
+            analytics: true,
+            historico: false,
+            isManager: true,
+            isFullAccess: false,
+            managerType: managerType,
+            hierarchyLevel: hierarchyLevel,
+            managedDepartments: hierarchyInfo.map(h => h.DEPTO_ATUAL),
+            managedDepartmentsDetails: hierarchyInfo.map(h => ({
+                departamento: h.DEPTO_ATUAL,
+                descricao: h.DESCRICAO_ATUAL,
+                filial: h.FILIAL,
+                hierarquia: h.HIERARQUIA_COMPLETA,
+                tipoGestao: h.TIPO_GESTAO
+            })),
+            hierarchyPaths: hierarchyInfo.map(h => h.HIERARQUIA_COMPLETA)
+        };
+    }
+    
+    console.log(`👥 ${user.nomeCompleto || user.NomeCompleto} identificado como colaborador comum`);
+    
+    // Usuários comuns - abas limitadas
+    return {
+        dashboard: true,
+        feedbacks: true,
+        recognitions: true,
+        humor: true,
+        objetivos: true,
+        pesquisas: true,
+        avaliacoes: true,
+        team: false,
+        analytics: false,
+        historico: false,
+        isManager: false,
+        isFullAccess: false,
+        managerType: 'Colaborador',
+        hierarchyLevel: 0,
+        managedDepartments: [],
+        hierarchyPaths: []
+    };
 }
 
 // Carregar variáveis de ambiente
@@ -40,8 +393,8 @@ const PORT = process.env.PORT || 3000;
 
 // Database config usando variáveis de ambiente
 const dbConfig = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    user: process.env.DB_USER || undefined,
+    password: process.env.DB_PASSWORD || undefined,
     server: process.env.DB_SERVER,
     database: process.env.DB_NAME,
     driver: process.env.DB_DRIVER,
@@ -61,8 +414,8 @@ const dbConfig = {
 
 // Configuração alternativa para fallback usando variáveis de ambiente
 const dbConfigFallback = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    user: process.env.DB_USER || undefined,
+    password: process.env.DB_PASSWORD || undefined,
     server: process.env.DB_SERVER,
     database: process.env.DB_NAME,
     driver: process.env.DB_DRIVER,
@@ -88,7 +441,6 @@ async function connectWithRetry(config, maxRetries = 3) {
         try {
             console.log(`🔌 Tentativa ${attempt}/${maxRetries} de conexão com banco de dados...`);
             const pool = await sql.connect(config);
-            console.log('✅ Conexão com banco de dados estabelecida com sucesso');
             return pool;
         } catch (error) {
             lastError = error;
@@ -181,7 +533,6 @@ async function ensureChatTablesExist(pool) {
             END
         `);
         
-        console.log('✅ Tabelas de chat verificadas/criadas com sucesso');
     } catch (error) {
         console.error('❌ Erro ao criar tabelas de chat:', error.message);
         // Não falhar se as tabelas já existirem
@@ -234,7 +585,6 @@ app.get('/', (req, res) => {
 
 // Rota específica para index.html com proteção TOTAL
 app.get('/index.html', (req, res, next) => {
-    console.log('🔒 Verificando acesso ao index.html - Sessão:', !!req.session.user);
     if (!req.session.user) {
         console.log('❌ BLOQUEADO: Acesso negado ao index.html');
         res.set({
@@ -245,7 +595,6 @@ app.get('/index.html', (req, res, next) => {
         });
         return res.redirect('/login');
     }
-    console.log('✅ Acesso autorizado ao index.html');
     res.set({
         'Cache-Control': 'no-cache, no-store, must-revalidate, private',
         'Pragma': 'no-cache',
@@ -264,7 +613,6 @@ const protectedPages = [
     '/index.html',
     '/autoavaliacao.html', 
     '/avaliacao-gestor.html',
-    '/avaliacoes-periodicas.html',
     '/criar-pesquisa.html',
     '/responder-pesquisa.html',
     '/resultados-pesquisa.html'
@@ -286,7 +634,6 @@ app.use((req, res, next) => {
     
     // Verificar apenas arquivos HTML
     if (requestedFile.endsWith('.html')) {
-        console.log('🔍 Interceptando requisição HTML:', requestedFile, 'Sessão:', !!req.session.user);
         
         // BLOQUEIO TOTAL do index.html sem sessão válida
         if (requestedFile === '/index.html' && !req.session.user) {
@@ -367,27 +714,156 @@ sql.connect(dbConfig).then(async () => {
         console.log('⚠️ Erro ao verificar tabelas de chat:', error.message);
     }
     
-    // Manter usuários especiais sempre ativos (definidos por variável de ambiente)
-    if (process.env.SPECIAL_USERS_CPF) {
+    // ========================================
+    // AGENDAMENTO AUTOMÁTICO DE ATUALIZAÇÃO DE STATUS DAS PESQUISAS
+    // ========================================
+    
+    // Executar uma vez ao iniciar o servidor
+    console.log('🔄 Executando primeira verificação de status das pesquisas...');
+    await updatePesquisaStatus();
+    
+    // Configurar verificação para minutos cheios (00s) - menos sobrecarga
+    const syncToNextMinute = () => {
+        const now = new Date();
+        const secondsToNextMinute = 60 - now.getSeconds();
+        const millisecondsToNextMinute = secondsToNextMinute * 1000;
+        
+        setTimeout(() => {
+            // Executar imediatamente quando chegar no minuto cheio
+            const now = new Date().toLocaleTimeString('pt-BR');
+            console.log(`🕒 [${now}] Verificação automática de status das pesquisas...`);
+            updatePesquisaStatus();
+            
+            // Configurar intervalo de 60 segundos exatos a partir de agora (minuto cheio)
+    setInterval(async () => {
+        const now = new Date().toLocaleTimeString('pt-BR');
+        console.log(`🕒 [${now}] Verificação automática de status das pesquisas...`);
+        await updatePesquisaStatus();
+            }, 60 * 1000);
+        }, millisecondsToNextMinute);
+    };
+    
+    syncToNextMinute();
+    
+    // ========================================
+    // AGENDAMENTO AUTOMÁTICO DE ATUALIZAÇÃO DE STATUS DOS OBJETIVOS
+    // ========================================
+    
+    // Carregar dependências necessárias
+    loadDependencies();
+    
+    // Configurar horário de verificação (padrão: meia-noite)
+    const objetivoCheckTime = process.env.OBJETIVO_CHECK_TIME || '0 0 * * *'; // 00:00 todos os dias
+    
+    // Executar uma vez ao iniciar o servidor
+    console.log('🔄 Executando primeira verificação de status dos objetivos...');
+    await updateObjetivoStatus();
+    
+    // Agendar verificação diária
+    schedule.scheduleJob(objetivoCheckTime, async () => {
+        const now = new Date().toLocaleString('pt-BR');
+        console.log(`🕛 [${now}] Verificação automática de status dos objetivos...`);
+        await updateObjetivoStatus();
+    });
+    
+    console.log(`⏰ Agendamento automático de objetivos configurado: ${objetivoCheckTime}`);
+    
+    // ========================================
+    // AGENDAMENTO AUTOMÁTICO DE VERIFICAÇÃO DE AVALIAÇÕES
+    // ========================================
+    // Executar verificação diariamente às 08:00 (horário de chegada dos funcionários)
+    const avaliacaoCheckTime = '0 8 * * *'; // Todo dia às 08:00
+    
+    // Função para verificar e criar avaliações automaticamente
+    async function verificarAvaliacoesAutomaticamente() {
         try {
-            const specialCPFs = process.env.SPECIAL_USERS_CPF.split(',');
+            loadDependencies();
             const pool = await sql.connect(dbConfig);
             
-            for (const cpf of specialCPFs) {
-                const cleanCPF = cpf.trim();
-                await pool.request()
-                    .input('cpf', sql.VarChar, cleanCPF)
-                    .query(`
-                        UPDATE Users 
-                        SET IsActive = 1, updated_at = GETDATE()
-                        WHERE CPF = @cpf
-                    `);
-            }
-            console.log('🔧 Usuários especiais mantidos ativos');
+            const resultado = await AvaliacoesManager.verificarECriarAvaliacoes(pool);
+            
+            console.log('✅ Verificação automática de avaliações concluída:', resultado);
+            
         } catch (error) {
-            console.log('⚠️ Erro ao ativar usuários especiais:', error.message);
+            console.error('❌ Erro na verificação automática de avaliações:', error);
         }
     }
+    
+    // Agendar verificação diária
+    schedule.scheduleJob(avaliacaoCheckTime, verificarAvaliacoesAutomaticamente);
+    
+    console.log(`⏰ Agendamento automático de avaliações configurado: ${avaliacaoCheckTime}`);
+    console.log('📋 Sistema de avaliações automáticas ativado - Verificação diária às 08:00');
+    
+    // Executar verificação na inicialização do servidor (opcional)
+    setTimeout(async () => {
+        console.log('🚀 Executando primeira verificação de avaliações na inicialização...');
+        await verificarAvaliacoesAutomaticamente();
+    }, 10000); // Aguardar 10 segundos após inicialização
+    
+    // ========================================
+    // VERIFICAÇÃO AUTOMÁTICA DE AVALIAÇÕES EXPIRADAS
+    // ========================================
+    // Atualizar status de avaliações expiradas diariamente
+    async function verificarStatusAvaliacoes() {
+        try {
+            const pool = await sql.connect(dbConfig);
+            
+            // PASSO 1: Mudar avaliações AGENDADAS para PENDENTE quando chegar no período correto
+            // Para 45 dias: quando tiver >= 45 dias desde admissão
+            const resultAgendada45 = await pool.request().query(`
+                UPDATE Avaliacoes
+                SET StatusAvaliacao = 'Pendente',
+                    AtualizadoEm = GETDATE()
+                WHERE StatusAvaliacao = 'Agendada'
+                    AND TipoAvaliacaoId = 1
+                    AND DATEDIFF(DAY, DataAdmissao, GETDATE()) >= 45
+            `);
+            
+            if (resultAgendada45.rowsAffected[0] > 0) {
+                console.log(`📅 ${resultAgendada45.rowsAffected[0]} avaliação(ões) de 45 dias ativada(s) (Agendada → Pendente)`);
+            }
+            
+            // Para 90 dias: quando tiver >= 90 dias desde admissão
+            const resultAgendada90 = await pool.request().query(`
+                UPDATE Avaliacoes
+                SET StatusAvaliacao = 'Pendente',
+                    AtualizadoEm = GETDATE()
+                WHERE StatusAvaliacao = 'Agendada'
+                    AND TipoAvaliacaoId = 2
+                    AND DATEDIFF(DAY, DataAdmissao, GETDATE()) >= 90
+            `);
+            
+            if (resultAgendada90.rowsAffected[0] > 0) {
+                console.log(`📅 ${resultAgendada90.rowsAffected[0]} avaliação(ões) de 90 dias ativada(s) (Agendada → Pendente)`);
+            }
+            
+            // PASSO 2: Marcar avaliações PENDENTES como EXPIRADAS quando passar do prazo
+            const resultExpirada = await pool.request().query(`
+                UPDATE Avaliacoes
+                SET StatusAvaliacao = 'Expirada',
+                    AtualizadoEm = GETDATE()
+                WHERE StatusAvaliacao = 'Pendente'
+                    AND DataLimiteResposta < GETDATE()
+            `);
+            
+            if (resultExpirada.rowsAffected[0] > 0) {
+                console.log(`⏰ ${resultExpirada.rowsAffected[0]} avaliação(ões) marcada(s) como expirada(s) (Pendente → Expirada)`);
+            }
+            
+        } catch (error) {
+            console.error('❌ Erro ao verificar status de avaliações:', error);
+        }
+    }
+    
+    // Agendar verificação diária de status de avaliações (00:00)
+    schedule.scheduleJob('0 0 * * *', verificarStatusAvaliacoes);
+    
+    // Executar verificação inicial
+    setTimeout(verificarStatusAvaliacoes, 15000); // 15 segundos após inicialização
+    
+    console.log('📅 Verificação automática de status de avaliações agendada');
+    
 }).catch(err => console.error('Erro ao conectar ao SQL Server:', err));
 
 
@@ -419,7 +895,7 @@ const canAccessUser = async (req, res, next) => {
         const targetUserResult = await pool.request()
             .input('userId', sql.Int, targetUserId)
             .query(`
-                SELECT HierarchyLevel, HierarchyPath, Departamento, Matricula
+                SELECT HierarchyPath, Departamento, Matricula
                 FROM Users WHERE Id = @userId
             `);
         
@@ -427,6 +903,9 @@ const canAccessUser = async (req, res, next) => {
         if (!targetUser) {
             return res.status(404).json({ error: 'Usuário não encontrado' });
         }
+        
+        // Calcular HierarchyLevel do target dinamicamente
+        targetUser.HierarchyLevel = getHierarchyLevel(targetUser.HierarchyPath, targetUser.Matricula, targetUser.Departamento);
         
         const currentUser = req.session.user;
         
@@ -479,7 +958,7 @@ const requireHierarchyLevel = (minLevel) => {
 };
 
 // Middleware para verificar se é gestor ou superior
-const requireManagerAccess = (req, res, next) => {
+const requireManagerAccess = async (req, res, next) => {
     const user = req.session.user;
     
     if (!user) {
@@ -494,16 +973,49 @@ const requireManagerAccess = (req, res, next) => {
         return next();
     }
     
-    // Gestores (Level 3+) têm acesso (gerentes e superiores)
-    if (user.hierarchyLevel >= 3) {
-        console.log('✅ Acesso liberado: Gestor nível', user.hierarchyLevel);
+    // Verificar se é RH ou T&D
+    const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+    const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+    const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                 departamento.includes('TREINAMENTO') || 
+                 departamento.includes('DESENVOLVIMENTO') ||
+                 departamento.includes('T&D');
+    
+    if (isHR || isTD) {
+        console.log('✅ Acesso liberado: RH/T&D -', user.departamento);
         return next();
     }
     
-    console.log('❌ Acesso negado: Nível insuficiente');
-    return res.status(403).json({ 
-        error: 'Acesso negado. Apenas gestores e superiores podem acessar este recurso.' 
-    });
+    // Verificar se é gestor (aparece como responsável na HIERARQUIA_CC)
+    try {
+        const pool = await sql.connect(dbConfig);
+        const isManagerCheck = await pool.request()
+            .input('userMatricula', sql.VarChar, user.matricula)
+            .query(`
+                SELECT COUNT(*) as count
+                FROM HIERARQUIA_CC
+                WHERE RESPONSAVEL_ATUAL = @userMatricula
+                   OR NIVEL_1_MATRICULA_RESP = @userMatricula
+                   OR NIVEL_2_MATRICULA_RESP = @userMatricula
+                   OR NIVEL_3_MATRICULA_RESP = @userMatricula
+                   OR NIVEL_4_MATRICULA_RESP = @userMatricula
+            `);
+        
+        const isManager = isManagerCheck.recordset[0].count > 0;
+        
+        if (isManager) {
+            console.log('✅ Acesso liberado: Gestor (matrícula:', user.matricula, ')');
+            return next();
+        }
+        
+        console.log('❌ Acesso negado: Nível insuficiente');
+        return res.status(403).json({ 
+            error: 'Acesso negado. Apenas gestores, RH e T&D podem acessar este recurso.' 
+        });
+    } catch (error) {
+        console.error('Erro ao verificar acesso de gestor:', error);
+        return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
 };
 
 // Função para validar CPF
@@ -600,7 +1112,7 @@ app.post('/api/check-cpf', async (req, res) => {
         }
         
         // Buscar informações de hierarquia usando o HierarchyManager
-        const { level: hierarchyLevel, path: hierarchyPath, departamento: departamentoDesc } = 
+        const { path: hierarchyPath, departamento: departamentoDesc } = 
             await hierarchyManager.getHierarchyLevel(funcionario.MATRICULA);
         
         res.json({
@@ -612,7 +1124,6 @@ app.post('/api/check-cpf', async (req, res) => {
                 centroCusto: funcionario.CENTRO_CUSTO,
                 status: funcionario.STATUS_GERAL,
                 departamento: departamentoDesc,
-                hierarchyLevel: hierarchyLevel,
                 hierarchyPath: hierarchyPath,
                 nome: `Funcionário ${funcionario.MATRICULA}` // Nome será preenchido no cadastro
             },
@@ -656,7 +1167,7 @@ app.post('/api/register', async (req, res) => {
         const existingUserResult = await pool.request()
             .input('cpfFormatado', sql.VarChar, cpfFormatado)
             .input('cpfSemFormatacao', sql.VarChar, cpfSemFormatacao)
-            .query(`SELECT Id, PasswordHash, PasswordTemporary, CPF FROM Users WHERE CPF = @cpfFormatado OR CPF = @cpfSemFormatacao`);
+            .query(`SELECT Id, PasswordHash, FirstLogin, CPF FROM Users WHERE CPF = @cpfFormatado OR CPF = @cpfSemFormatacao`);
         
         if (existingUserResult.recordset.length === 0) {
             return res.status(400).json({ error: 'CPF não encontrado no sistema' });
@@ -664,9 +1175,9 @@ app.post('/api/register', async (req, res) => {
         
         const existingUser = existingUserResult.recordset[0];
         
-        // Permitir cadastro se não tem senha OU se tem senha temporária
-        if (existingUser.PasswordHash && existingUser.PasswordTemporary === 0) {
-            return res.status(400).json({ error: 'Usuário já possui senha cadastrada' });
+        // Permitir cadastro apenas se FirstLogin = 1 (precisa fazer cadastro)
+        if (existingUser.FirstLogin === 0 || existingUser.FirstLogin === false) {
+            return res.status(400).json({ error: 'Usuário já possui cadastro realizado' });
         }
         
         // Verificar se existe na base de funcionários (usando CPF sem formatação)
@@ -699,11 +1210,11 @@ app.post('/api/register', async (req, res) => {
         initializeManagers();
         console.log(`Chamando getHierarchyLevel para matrícula: ${funcionario.MATRICULA}`);
         const hierarchyData = await hierarchyManager.getHierarchyLevel(funcionario.MATRICULA);
-        const { level: hierarchyLevel, path: hierarchyPath, departamento: departamentoDesc } = hierarchyData;
+        const { path: hierarchyPath, departamento: departamentoDesc } = hierarchyData;
         
         // Log para debug
         console.log(`Hierarquia para cadastro ${funcionario.MATRICULA}:`, hierarchyData);
-        console.log(`Valores extraídos: level=${hierarchyLevel}, path=${hierarchyPath}, departamento=${departamentoDesc}`);
+        console.log(`Valores extraídos: path=${hierarchyPath}, departamento=${departamentoDesc}`);
         
         // Hash da senha fornecida pelo usuário
         loadDependencies();
@@ -714,7 +1225,8 @@ app.post('/api/register', async (req, res) => {
         const nomeFinal = nomeCompleto ? nomeCompleto.split(' ')[0] : (funcionario.NOME ? funcionario.NOME.split(' ')[0] : funcionario.MATRICULA);
         
         const cpfNoBanco = existingUser.CPF; // Usar o CPF como está no banco
-        await pool.request()
+        
+        const updateResult = await pool.request()
             .input('cpf', sql.VarChar, cpfNoBanco)
             .input('passwordHash', sql.VarChar, senhaHash)
             .input('nomeCompleto', sql.VarChar, nomeCompletoFinal)
@@ -722,7 +1234,7 @@ app.post('/api/register', async (req, res) => {
             .query(`
                 UPDATE Users 
                 SET PasswordHash = @passwordHash,
-                    PasswordTemporary = 0,
+                    FirstLogin = 0,
                     NomeCompleto = @nomeCompleto,
                     nome = @nome,
                     IsActive = 1,
@@ -734,11 +1246,14 @@ app.post('/api/register', async (req, res) => {
         const userResult = await pool.request()
             .input('cpf', sql.VarChar, cpfNoBanco)
             .query(`
-                SELECT Id, CPF, Matricula, HierarchyLevel, HierarchyPath, Departamento, NomeCompleto, Unidade, Cargo
+                SELECT Id, CPF, Matricula, HierarchyPath, Departamento, NomeCompleto, Filial
                 FROM Users WHERE CPF = @cpf
             `);
         
         const updatedUser = userResult.recordset[0];
+        
+        // Calcular HierarchyLevel dinamicamente
+        const hierarchyLevel = getHierarchyLevel(updatedUser.HierarchyPath);
         
         res.json({
             success: true,
@@ -748,7 +1263,7 @@ app.post('/api/register', async (req, res) => {
             matricula: updatedUser.Matricula,
             nomeCompleto: updatedUser.NomeCompleto,
             departamento: updatedUser.Departamento,
-            hierarchyLevel: updatedUser.HierarchyLevel,
+            hierarchyLevel: hierarchyLevel,
             hierarchyPath: updatedUser.HierarchyPath
         });
         
@@ -793,7 +1308,7 @@ app.post('/api/login', async (req, res) => {
             .query(`
                 WITH FuncionarioMaisRecente AS (
                     SELECT 
-                        MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, SITUACAO_FOLHA, STATUS_GERAL, DTA_ADMISSAO,
+                        MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, SITUACAO_FOLHA, STATUS_GERAL, DTA_ADMISSAO, DEPARTAMENTO,
                         ROW_NUMBER() OVER (ORDER BY 
                             CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END,
                             CASE WHEN SITUACAO_FOLHA = '' OR SITUACAO_FOLHA IS NULL THEN 0 ELSE 1 END,
@@ -803,7 +1318,7 @@ app.post('/api/login', async (req, res) => {
                     FROM TAB_HIST_SRA 
                     WHERE CPF = @cpf
                 )
-                SELECT TOP 1 MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, SITUACAO_FOLHA, STATUS_GERAL
+                SELECT TOP 1 MATRICULA, NOME, FILIAL, CENTRO_CUSTO, CPF, SITUACAO_FOLHA, STATUS_GERAL, DEPARTAMENTO
                 FROM FuncionarioMaisRecente
                 WHERE rn = 1
             `);
@@ -824,7 +1339,7 @@ app.post('/api/login', async (req, res) => {
         
         // Buscar hierarquia do funcionário usando o HierarchyManager com a matrícula mais recente
         initializeManagers();
-        const { level: hierarchyLevel, path: hierarchyPath, departamento: departamentoDesc } = 
+        const { path: hierarchyPath, departamento: departamentoDesc } = 
             await hierarchyManager.getHierarchyLevel(funcionario.MATRICULA);
         
         // Buscar usuário no sistema (com ou sem formatação)
@@ -832,20 +1347,40 @@ app.post('/api/login', async (req, res) => {
             .input('cpfFormatado', sql.VarChar, cpfFormatado)
             .input('cpfSemFormatacao', sql.VarChar, cpfSemFormatacao)
             .query(`
-                SELECT u.Id AS userId, u.UserName, u.PasswordHash, u.PasswordTemporary,
-                       u.NomeCompleto, u.nome, u.Cargo, u.Departamento, u.IsActive,
-                       u.Matricula, u.HierarchyLevel, u.HierarchyPath
+                SELECT u.Id AS userId, u.UserName, u.PasswordHash, u.FirstLogin,
+                       u.NomeCompleto, u.nome, u.Departamento, u.IsActive,
+                       u.Matricula, u.HierarchyPath
                 FROM Users u
                 WHERE u.CPF = @cpfFormatado OR u.CPF = @cpfSemFormatacao
             `);
 
         let user = userResult.recordset[0];
 
-        // Se usuário não existe ou foi resetado (PasswordTemporary = 1 ou true), retornar erro específico
-        if (!user || user.PasswordTemporary === 1 || user.PasswordTemporary === true) {
+        // Se usuário não existe, retornar erro específico
+        if (!user) {
             return res.status(401).json({ 
-                error: 'Usuário inexistente. Faça seu cadastro primeiro.',
+                error: 'CPF não encontrado ou você não possui permissão para acessar o sistema.',
                 userNotFound: true 
+            });
+        }
+
+        // Calcular HierarchyLevel dinamicamente usando a função JavaScript
+        user.HierarchyLevel = getHierarchyLevel(user.HierarchyPath, user.Matricula, user.Departamento);
+
+        // Se FirstLogin = 1, usuário precisa fazer cadastro primeiro
+        if (user.FirstLogin === 1 || user.FirstLogin === true) {
+            return res.status(200).json({ 
+                success: false,
+                error: 'Você não possui cadastro ainda. Crie uma conta primeiro.',
+                needsRegistration: true 
+            });
+        }
+
+        // Verificar se usuário está ativo no sistema
+        if (user.IsActive !== 1 && user.IsActive !== true) {
+            return res.status(401).json({ 
+                error: 'Usuário inativo no sistema. Entre em contato com o administrador.',
+                userInactive: true 
             });
         }
         
@@ -853,7 +1388,7 @@ app.post('/api/login', async (req, res) => {
         const updatedUserResult = await pool.request()
             .input('userId', sql.Int, user.userId)
             .query(`
-                SELECT Matricula, NomeCompleto, Departamento, HierarchyLevel, HierarchyPath, Unidade, Cargo
+                SELECT Matricula, NomeCompleto, Departamento, HierarchyPath, Filial
                 FROM Users WHERE Id = @userId
             `);
         
@@ -862,43 +1397,40 @@ app.post('/api/login', async (req, res) => {
             user.Matricula = updatedUser.Matricula;
             user.NomeCompleto = updatedUser.NomeCompleto;
             user.Departamento = updatedUser.Departamento;
-            user.HierarchyLevel = updatedUser.HierarchyLevel;
             user.HierarchyPath = updatedUser.HierarchyPath;
-            user.Unidade = updatedUser.Unidade;
-            user.Cargo = updatedUser.Cargo;
-            console.log(`🔄 Dados atualizados do banco - HierarchyLevel: ${user.HierarchyLevel}`);
+            user.Filial = updatedUser.Filial;
+            // Recalcular HierarchyLevel com dados atualizados
+            user.HierarchyLevel = getHierarchyLevel(user.HierarchyPath, user.Matricula, user.Departamento);
         }
         
         // Verificar se dados do funcionário precisam ser atualizados
+        // Usar o departamento correto da TAB_HIST_SRA, não o do HierarchyPath
+        const departamentoCorreto = funcionario.DEPARTAMENTO;
+        
         const needsUpdate = 
             user.Matricula !== funcionario.MATRICULA ||
             user.NomeCompleto !== funcionario.NOME ||
-            user.Departamento !== departamentoDesc ||
-            user.HierarchyLevel !== hierarchyLevel ||
+            user.Departamento !== departamentoCorreto ||
             user.HierarchyPath !== hierarchyPath ||
-            user.Unidade !== funcionario.FILIAL ||
-            user.Cargo !== funcionario.DEPARTAMENTO;
+            user.Filial !== funcionario.FILIAL;
 
         if (needsUpdate) {
             console.log(`Atualizando dados do usuário: ${funcionario.NOME}`);
+            console.log(`📋 Departamento atual: ${user.Departamento}, Departamento correto (TAB_HIST_SRA): ${departamentoCorreto}`);
             await pool.request()
                 .input('userId', sql.Int, user.userId)
                 .input('matricula', sql.VarChar, funcionario.MATRICULA)
                 .input('nomeCompleto', sql.VarChar, funcionario.NOME)
-                .input('departamento', sql.VarChar, departamentoDesc)
-                .input('hierarchyLevel', sql.Int, hierarchyLevel)
+                .input('departamento', sql.VarChar, departamentoCorreto)
                 .input('hierarchyPath', sql.VarChar, hierarchyPath)
-                .input('unidade', sql.VarChar, funcionario.FILIAL)
-                .input('cargo', sql.VarChar, funcionario.DEPARTAMENTO)
+                .input('filial', sql.VarChar, funcionario.FILIAL)
                 .query(`
                     UPDATE Users 
                     SET Matricula = @matricula,
                         NomeCompleto = @nomeCompleto,
                         Departamento = @departamento,
-                        HierarchyLevel = @hierarchyLevel,
                         HierarchyPath = @hierarchyPath,
-                        Unidade = @unidade,
-                        Cargo = @cargo,
+                        Filial = @filial,
                         updated_at = GETDATE()
                     WHERE Id = @userId
                 `);
@@ -906,32 +1438,25 @@ app.post('/api/login', async (req, res) => {
             // Atualizar objeto user para sessão
             user.Matricula = funcionario.MATRICULA;
             user.NomeCompleto = funcionario.NOME;
-            user.Departamento = departamentoDesc;
-            user.HierarchyLevel = hierarchyLevel;
+            user.Departamento = departamentoCorreto;
+            user.HierarchyLevel = getHierarchyLevel(hierarchyPath, funcionario.MATRICULA, departamentoCorreto);
             user.HierarchyPath = hierarchyPath;
-            user.Unidade = funcionario.FILIAL;
-            user.Cargo = funcionario.DEPARTAMENTO;
-        }
-        
-        // Ativar usuário especial se estiver inativo
-        if (isSpecialUser && user.IsActive === 0) {
-            await pool.request()
-                .input('userId', sql.Int, user.userId)
-                .query(`UPDATE Users SET IsActive = 1 WHERE Id = @userId`);
-            user.IsActive = 1;
+            user.Filial = funcionario.FILIAL;
         }
         
         // Verificar senha
         loadDependencies();
-        console.log('🔐 Verificando senha...');
+        
+        // Verificar se o hash existe antes de comparar
+        if (!user.PasswordHash || user.PasswordHash === '') {
+            return res.status(401).json({ error: 'Senha não configurada. Faça o cadastro primeiro.' });
+        }
+        
         const senhaValida = await bcrypt.compare(password, user.PasswordHash);
         
         if (!senhaValida) {
-            console.log('❌ Senha incorreta');
             return res.status(401).json({ error: 'Senha incorreta' });
         }
-        
-        console.log('✅ Senha correta, login autorizado');
 
         
         // Atualizar último login
@@ -960,11 +1485,18 @@ app.post('/api/login', async (req, res) => {
             role: role,
             nomeCompleto: nomeCompletoSessao,
             nome: nomeSessao,
-            cargo: user.Cargo || 'Funcionário',
-            departamento: user.Departamento,
+            Departamento: user.Departamento || 'Funcionário',
+            departamento: user.Departamento || 'Funcionário',
+            filial: user.Filial || funcionario.FILIAL, // Adicionar filial do usuário
+            Filial: user.Filial || funcionario.FILIAL,
+            CPF: cpfFormatado,
             cpf: cpfFormatado,
+            Matricula: user.Matricula,
             matricula: user.Matricula,
+            NomeCompleto: nomeCompletoSessao,
+            HierarchyLevel: user.HierarchyLevel,
             hierarchyLevel: user.HierarchyLevel,
+            HierarchyPath: user.HierarchyPath,
             hierarchyPath: user.HierarchyPath,
             isFirstAccess: false
         };
@@ -981,6 +1513,112 @@ app.get('/api/usuario', (req, res) => {
         res.json(req.session.user);
     } else {
         res.status(401).json({ error: 'Usuário não autenticado' });
+    }
+});
+
+// API para retornar permissões de acesso às abas
+app.get('/api/usuario/permissions', requireAuth, async (req, res) => {
+    try {
+        const user = req.session.user;
+        const permissions = await getUserTabPermissions(user);
+        
+        console.log(`📋 Retornando permissões para ${user.nomeCompleto || user.NomeCompleto}:`);
+        console.log(`   - Histórico: ${permissions.historico ? '✅ PERMITIDO' : '❌ BLOQUEADO'}`);
+        console.log(`   - isFullAccess: ${permissions.isFullAccess}`);
+        console.log(`   - isManager: ${permissions.isManager}`);
+        
+        res.json({
+            success: true,
+            permissions: {
+                dashboard: permissions.dashboard,
+                feedbacks: permissions.feedbacks,
+                recognitions: permissions.recognitions,
+                humor: permissions.humor,
+                objetivos: permissions.objetivos,
+                pesquisas: permissions.pesquisas,
+                avaliacoes: permissions.avaliacoes,
+                team: permissions.team,
+                analytics: permissions.analytics,
+                historico: permissions.historico
+            },
+            user: {
+                nome: user.nomeCompleto || user.NomeCompleto,
+                departamento: user.Departamento,
+                hierarchyLevel: user.HierarchyLevel,
+                cpf: user.CPF
+            },
+            hierarchy: {
+                isManager: permissions.isManager,
+                isFullAccess: permissions.isFullAccess,
+                managerType: permissions.managerType,
+                hierarchyLevel: permissions.hierarchyLevel,
+                managedDepartments: permissions.managedDepartments,
+                hierarchyPaths: permissions.hierarchyPaths
+            }
+        });
+    } catch (error) {
+        console.error('Erro ao buscar permissões:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// API de debug para verificar se usuário é gestor
+app.get('/api/debug/manager-check', requireAuth, async (req, res) => {
+    try {
+        const user = req.session.user;
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se usuário é gestor
+        const isManager = await isUserManager(user);
+        const hierarchyInfo = isManager ? await getUserHierarchyInfo(user) : [];
+        const permissions = await getUserTabPermissions(user);
+        
+        // Verificar departamento do usuário
+        const userResult = await pool.request()
+            .input('cpf', sql.VarChar, user.CPF)
+            .query(`
+                SELECT Departamento, DescricaoDepartamento, HierarchyPath, Filial
+                FROM Users 
+                WHERE CPF = @cpf
+            `);
+        
+        // Buscar subordinados diretos
+        const subordinatesResult = await pool.request()
+            .input('departamento', sql.VarChar, user.Departamento)
+            .query(`
+                SELECT COUNT(*) as count
+                FROM Users 
+                WHERE Departamento IN (
+                    SELECT DEPTO_ATUAL 
+                    FROM HIERARQUIA_CC 
+                    WHERE HIERARQUIA_COMPLETA LIKE '%' + @departamento + '%'
+                )
+                AND IsActive = 1
+            `);
+        
+        res.json({
+            success: true,
+            user: {
+                nome: user.nomeCompleto || user.NomeCompleto,
+                cpf: user.CPF,
+                departamento: user.Departamento,
+                hierarchyPath: user.HierarchyPath,
+                filial: user.Filial
+            },
+            isManager: isManager,
+            hierarchyInfo: hierarchyInfo,
+            permissions: permissions,
+            userRecords: userResult.recordset,
+            subordinatesCount: subordinatesResult.recordset[0].count,
+            debug: {
+                cpfUsed: user.CPF,
+                departamentoUsado: user.Departamento,
+                totalDepartamentosGerenciados: hierarchyInfo.length
+            }
+        });
+    } catch (error) {
+        console.error('Erro no debug de gestor:', error);
+        res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
     }
 });
 
@@ -1076,60 +1714,6 @@ app.post('/api/fix-matricula-change', requireAuth, async (req, res) => {
     }
 });
 
-// Verificar dados na hierarquia
-app.get('/api/check-hierarchy', requireAuth, async (req, res) => {
-    try {
-        const pool = await sql.connect(dbConfig);
-        
-        // Buscar registros relacionados ao departamento TI
-        const result = await pool.request()
-            .query(`
-                SELECT * FROM HIERARQUIA_CC 
-                WHERE DESCRICAO_ATUAL LIKE '%TI%' 
-                   OR DEPTO_ATUAL = '000001211'
-                   OR RESPONSAVEL_ATUAL IN ('84059940925', '999759', '002734')
-                ORDER BY DEPTO_ATUAL
-            `);
-        
-        res.json({
-            success: true,
-            registros: result.recordset,
-            total: result.recordset.length
-        });
-    } catch (error) {
-        console.error('Erro ao verificar hierarquia:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Definir usuário 999759 como Gerente TI
-app.get('/api/set-manager-999759', requireAuth, async (req, res) => {
-    try {
-        const pool = await sql.connect(dbConfig);
-        
-        // Atualizar usuário como Gerente TI nível 4
-        await pool.request()
-            .query(`
-                UPDATE Users 
-                SET HierarchyLevel = 4,
-                    HierarchyPath = '000000011 > 000000121 > 000001211',
-                    Departamento = 'GERENCIA TI',
-                    updated_at = GETDATE()
-                WHERE Matricula = '999759'
-            `);
-        
-        res.json({ 
-            success: true, 
-            message: 'Usuário 999759 definido como Gerente TI nível 4'
-        });
-    } catch (error) {
-        console.error('Erro ao definir gestor:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-
-
 // Logout route
 app.post('/api/logout', requireAuth, async (req, res) => {
     try {
@@ -1178,16 +1762,6 @@ app.get('/api/metrics', requireAuth, async (req, res) => {
                 AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -30, GETDATE()) AS DATE)
             `);
         
-        // Feedbacks RECEBIDOS do mês anterior para comparação
-        const feedbacksPrevResult = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT COUNT(*) as count FROM Feedbacks 
-                WHERE to_user_id = @userId
-                AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -60, GETDATE()) AS DATE)
-                AND CAST(created_at AS DATE) < CAST(DATEADD(day, -30, GETDATE()) AS DATE)
-            `);
-        
         // Reconhecimentos RECEBIDOS pelo usuário no último mês
         const recognitionsResult = await pool.request()
             .input('userId', sql.Int, userId)
@@ -1197,16 +1771,6 @@ app.get('/api/metrics', requireAuth, async (req, res) => {
                 AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -30, GETDATE()) AS DATE)
             `);
         
-        // Reconhecimentos RECEBIDOS do mês anterior
-        const recognitionsPrevResult = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT COUNT(*) as count FROM Recognitions 
-                WHERE to_user_id = @userId
-                AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -60, GETDATE()) AS DATE)
-                AND CAST(created_at AS DATE) < CAST(DATEADD(day, -30, GETDATE()) AS DATE)
-            `);
-        
         // Feedbacks ENVIADOS pelo usuário (para participação)
         const sentFeedbacksResult = await pool.request()
             .input('userId', sql.Int, userId)
@@ -1214,16 +1778,6 @@ app.get('/api/metrics', requireAuth, async (req, res) => {
                 SELECT COUNT(*) as count FROM Feedbacks 
                 WHERE from_user_id = @userId
                 AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -30, GETDATE()) AS DATE)
-            `);
-        
-        // Feedbacks ENVIADOS do mês anterior
-        const sentFeedbacksPrevResult = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT COUNT(*) as count FROM Feedbacks 
-                WHERE from_user_id = @userId
-                AND CAST(created_at AS DATE) >= CAST(DATEADD(day, -60, GETDATE()) AS DATE)
-                AND CAST(created_at AS DATE) < CAST(DATEADD(day, -30, GETDATE()) AS DATE)
             `);
         
         // Pontuação média dos feedbacks RECEBIDOS
@@ -1241,33 +1795,16 @@ app.get('/api/metrics', requireAuth, async (req, res) => {
             `);
 
         const feedbacksReceived = feedbacksResult.recordset[0].count || 0;
-        const feedbacksReceivedPrev = feedbacksPrevResult.recordset[0].count || 1;
         const recognitionsReceived = recognitionsResult.recordset[0].count || 0;
-        const recognitionsReceivedPrev = recognitionsPrevResult.recordset[0].count || 1;
         const feedbacksSent = sentFeedbacksResult.recordset[0].count || 0;
-        const feedbacksSentPrev = sentFeedbacksPrevResult.recordset[0].count || 1;
         const avgScore = (avgScoreResult.recordset[0].avg_score || 7.0);
 
-        // Calcular percentuais de mudança
-        const feedbackChange = feedbacksReceivedPrev > 0 ? 
-            Math.round(((feedbacksReceived - feedbacksReceivedPrev) / feedbacksReceivedPrev) * 100) : 0;
-        const recognitionChange = recognitionsReceivedPrev > 0 ? 
-            Math.round(((recognitionsReceived - recognitionsReceivedPrev) / recognitionsReceivedPrev) * 100) : 0;
-        const participationChange = feedbacksSentPrev > 0 ? 
-            Math.round(((feedbacksSent - feedbacksSentPrev) / feedbacksSentPrev) * 100) : 0;
-        const scoreChange = 0.5; // Pode ser calculado com dados históricos
-
+        // Indicadores de comparação removidos - apenas números principais são retornados
         res.json({
             feedbacksReceived,
             recognitionsReceived,
             feedbacksSent,
-            avgScore: avgScore.toFixed(1),
-            changes: {
-                feedbacks: feedbackChange,
-                recognitions: recognitionChange,
-                participation: participationChange,
-                avgScore: scoreChange
-            }
+            avgScore: avgScore.toFixed(1)
         });
     } catch (error) {
         console.error('Erro ao buscar métricas:', error);
@@ -1329,18 +1866,23 @@ app.get('/api/subordinates', requireAuth, async (req, res) => {
         const currentUser = req.session.user;
         const pool = await sql.connect(dbConfig);
         
-        // Buscar funcionários que têm o usuário atual como responsável
+        // CORREÇÃO: Buscar funcionários que têm o usuário atual como responsável
+        // Agora usa CHAVE COMPOSTA (MATRÍCULA + CPF) para evitar confusão com matrículas duplicadas
         const result = await pool.request()
             .input('matricula', sql.VarChar, currentUser.matricula)
+            .input('cpf', sql.VarChar, currentUser.cpf)  // ✅ Adicionar CPF para validação
             .query(`
                 SELECT 
-                    u.Id, u.NomeCompleto, u.Departamento, u.Cargo, u.HierarchyLevel,
+                    u.Id, u.NomeCompleto, u.Departamento, u.HierarchyPath,
                     u.Matricula, u.CPF, u.LastLogin
                 FROM Users u
-                JOIN HIERARQUIA_CC h ON u.Matricula = h.RESPONSAVEL_ATUAL
+                JOIN HIERARQUIA_CC h 
+                    ON u.Matricula = h.RESPONSAVEL_ATUAL
+                    AND u.CPF = h.CPF_RESPONSAVEL  -- ✅ Chave composta: MATRÍCULA + CPF
                 WHERE h.RESPONSAVEL_ATUAL = @matricula
-                AND u.IsActive = 1
-                ORDER BY u.HierarchyLevel DESC, u.NomeCompleto
+                    AND h.CPF_RESPONSAVEL = @cpf  -- ✅ Validar CPF do gestor
+                    AND u.IsActive = 1
+                ORDER BY u.NomeCompleto
             `);
         
         res.json(result.recordset);
@@ -1362,7 +1904,15 @@ app.get('/api/feedbacks/received', requireAuth, async (req, res) => {
                    u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                    u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                    (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-                   0 as replies_count
+                   (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count,
+                   CASE WHEN EXISTS(SELECT 1 FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'viewed') THEN 1 ELSE 0 END as has_reactions,
+                   CASE WHEN EXISTS(
+                       SELECT 1 FROM Gamification g 
+                       WHERE g.UserId = @userId 
+                       AND g.Action = 'feedback_respondido' 
+                       AND CAST(g.CreatedAt AS DATE) = CAST(f.created_at AS DATE)
+                       AND EXISTS(SELECT 1 FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id AND fr.user_id = @userId)
+                   ) THEN 1 ELSE 0 END as earned_points
             FROM Feedbacks f
             JOIN Users u1 ON f.from_user_id = u1.Id
             JOIN Users u2 ON f.to_user_id = u2.Id
@@ -1372,7 +1922,7 @@ app.get('/api/feedbacks/received', requireAuth, async (req, res) => {
         const request = pool.request().input('userId', sql.Int, userId);
         
         if (search) {
-            query += " AND (f.content LIKE @search OR u1.NomeCompleto LIKE @search)";
+            query += " AND (f.message LIKE @search OR u1.NomeCompleto LIKE @search)";
             request.input('search', sql.VarChar, `%${search}%`);
         }
         
@@ -1408,8 +1958,14 @@ app.get('/api/feedbacks/sent', requireAuth, async (req, res) => {
                    u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                    u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                    (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-                   0 as replies_count,
-                   CASE WHEN EXISTS(SELECT 1 FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id) THEN 1 ELSE 0 END as has_reactions
+                   (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count,
+                   CASE WHEN EXISTS(SELECT 1 FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'viewed') THEN 1 ELSE 0 END as has_reactions,
+                   CASE WHEN f.created_at = (
+                       SELECT MIN(f2.created_at) 
+                       FROM Feedbacks f2 
+                       WHERE f2.from_user_id = @userId 
+                       AND CAST(f2.created_at AS DATE) = CAST(f.created_at AS DATE)
+                   ) THEN 1 ELSE 0 END as earned_points
             FROM Feedbacks f
             JOIN Users u1 ON f.from_user_id = u1.Id
             JOIN Users u2 ON f.to_user_id = u2.Id
@@ -1419,7 +1975,7 @@ app.get('/api/feedbacks/sent', requireAuth, async (req, res) => {
         const request = pool.request().input('userId', sql.Int, userId);
         
         if (search) {
-            query += " AND (f.content LIKE @search OR u2.NomeCompleto LIKE @search)";
+            query += " AND (f.message LIKE @search OR u2.NomeCompleto LIKE @search)";
             request.input('search', sql.VarChar, `%${search}%`);
         }
         
@@ -1455,7 +2011,8 @@ app.get('/api/feedbacks', requireAuth, async (req, res) => {
                u1.NomeCompleto as from_name, u1.Departamento as from_dept,
                u2.NomeCompleto as to_name, u2.Departamento as to_dept,
                (SELECT COUNT(*) FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id AND fr.reaction_type = 'useful') as useful_count,
-               0 as replies_count
+               (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count,
+               CASE WHEN EXISTS(SELECT 1 FROM FeedbackReactions fr WHERE fr.feedback_id = f.Id) THEN 1 ELSE 0 END as has_reactions
         FROM Feedbacks f
         JOIN Users u1 ON f.from_user_id = u1.Id
         JOIN Users u2 ON f.to_user_id = u2.Id
@@ -1512,7 +2069,15 @@ app.post('/api/feedbacks', requireAuth, async (req, res) => {
                 VALUES (@from_user_id, @to_user_id, @type, @category, @message, GETDATE())
             `);
 
-        res.json({ success: true, id: result.recordset[0].Id });
+        // Adicionar pontos por enviar feedback (primeira vez no dia)
+        const pointsResult = await addPointsToUser(from_user_id, 'feedback_enviado', 10, pool);
+        
+        res.json({ 
+            success: true, 
+            id: result.recordset[0].Id,
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message
+        });
     } catch (error) {
         console.error('Erro ao criar feedback:', error);
         res.status(500).json({ error: 'Erro ao criar feedback' });
@@ -1580,7 +2145,13 @@ app.get('/api/recognitions/all', requireAuth, async (req, res) => {
                 SELECT r.*, 
                        u1.NomeCompleto as from_name,
                        u2.NomeCompleto as to_name,
-                       'received' as direction
+                       'received' as direction,
+                       CASE WHEN r.created_at = (
+                           SELECT MIN(r2.created_at) 
+                           FROM Recognitions r2 
+                           WHERE r2.to_user_id = @userId 
+                           AND CAST(r2.created_at AS DATE) = CAST(r.created_at AS DATE)
+                       ) THEN 1 ELSE 0 END as earned_points
                 FROM Recognitions r
                 JOIN Users u1 ON r.from_user_id = u1.Id
                 JOIN Users u2 ON r.to_user_id = u2.Id
@@ -1594,7 +2165,13 @@ app.get('/api/recognitions/all', requireAuth, async (req, res) => {
                 SELECT r.*, 
                        u1.NomeCompleto as from_name,
                        u2.NomeCompleto as to_name,
-                       'given' as direction
+                       'given' as direction,
+                       CASE WHEN r.created_at = (
+                           SELECT MIN(r2.created_at) 
+                           FROM Recognitions r2 
+                           WHERE r2.from_user_id = @userId 
+                           AND CAST(r2.created_at AS DATE) = CAST(r.created_at AS DATE)
+                       ) THEN 1 ELSE 0 END as earned_points
                 FROM Recognitions r
                 JOIN Users u1 ON r.from_user_id = u1.Id
                 JOIN Users u2 ON r.to_user_id = u2.Id
@@ -1606,6 +2183,9 @@ app.get('/api/recognitions/all', requireAuth, async (req, res) => {
             ...receivedResult.recordset,
             ...givenResult.recordset
         ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        console.log('Reconhecimentos encontrados:', allRecognitions.length);
+        console.log('Primeiro reconhecimento:', allRecognitions[0]);
         
         res.json(allRecognitions);
     } catch (error) {
@@ -1623,13 +2203,7 @@ app.post('/api/recognitions', requireAuth, async (req, res) => {
             return res.status(400).json({ error: 'Todos os campos são obrigatórios' });
         }
 
-        const points = {
-            'Inovador': 200,
-            'Colaborativo': 150,
-            'Dedicado': 100,
-            'Criativo': 175,
-            'Meta Superada': 500
-        }[badge] || 100;
+        const points = 5; // Sempre 5 pontos para reconhecimentos
 
         const pool = await sql.connect(dbConfig);
         const result = await pool.request()
@@ -1644,14 +2218,25 @@ app.post('/api/recognitions', requireAuth, async (req, res) => {
                 VALUES (@from_user_id, @to_user_id, @badge, @message, @points, GETDATE())
             `);
 
-        res.json({ success: true, id: result.recordset[0].Id });
+        // Adicionar pontos por enviar reconhecimento (primeira vez no dia)
+        const pointsResult = await addPointsToUser(from_user_id, 'reconhecimento_enviado', 5, pool);
+        
+        // Adicionar pontos para quem recebeu o reconhecimento (primeira vez no dia)
+        const pointsResultReceived = await addPointsToUser(to_user_id, 'reconhecimento_recebido', 5, pool);
+        
+        res.json({ 
+            success: true, 
+            id: result.recordset[0].Id,
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message,
+            pointsEarnedReceived: pointsResultReceived.success ? pointsResultReceived.points : 0,
+            pointsMessageReceived: pointsResultReceived.message
+        });
     } catch (error) {
         console.error('Erro ao criar reconhecimento:', error);
         res.status(500).json({ error: 'Erro ao criar reconhecimento' });
     }
 });
-
-
 
 // Reações aos feedbacks
 app.post('/api/feedbacks/:id/react', requireAuth, async (req, res) => {
@@ -2268,6 +2853,13 @@ app.post('/api/humor', requireAuth, async (req, res) => {
                     SET score = @score, description = @description, updated_at = GETDATE()
                     WHERE user_id = @userId AND CAST(created_at AS DATE) = @today
                 `);
+            
+            // Retornar com pointsEarned: 0 explicitamente para evitar notificação de pontos
+            res.json({ 
+                success: true, 
+                message: 'Humor atualizado com sucesso',
+                pointsEarned: 0
+            });
         } else {
             // Criar novo registro
             await pool.request()
@@ -2278,9 +2870,17 @@ app.post('/api/humor', requireAuth, async (req, res) => {
                     INSERT INTO DailyMood (user_id, score, description)
                     VALUES (@userId, @score, @description)
                 `);
+            
+            // Adicionar pontos por responder humor (primeira vez no dia)
+            const pointsResult = await addPointsToUser(userId, 'humor_respondido', 5, pool);
+            
+            res.json({ 
+                success: true, 
+                message: 'Humor registrado com sucesso',
+                pointsEarned: pointsResult.success ? pointsResult.points : 0,
+                pointsMessage: pointsResult.message
+            });
         }
-        
-        res.json({ success: true, message: 'Humor registrado com sucesso' });
     } catch (error) {
         console.error('Erro ao registrar humor:', error);
         res.status(500).json({ error: 'Erro ao registrar humor' });
@@ -2297,7 +2897,8 @@ app.get('/api/humor', requireAuth, async (req, res) => {
             .input('userId', sql.Int, userId)
             .input('today', sql.Date, new Date())
             .query(`
-                SELECT score, description, created_at
+                SELECT score, description, 
+                       updated_at as created_at
                 FROM DailyMood 
                 WHERE user_id = @userId 
                 AND CAST(created_at AS DATE) = @today
@@ -2311,6 +2912,143 @@ app.get('/api/humor', requireAuth, async (req, res) => {
     } catch (error) {
         console.error('Erro ao buscar humor:', error);
         res.status(500).json({ error: 'Erro ao buscar humor' });
+    }
+});
+
+// Buscar métricas da equipe (apenas para gestores e admins)
+app.get('/api/humor/team-metrics', requireAuth, requireManagerAccess, async (req, res) => {
+    try {
+        const userId = req.session.user.userId;
+        const userDepartment = req.session.user.departamento;
+        const pool = await sql.connect(dbConfig);
+        
+        // CORREÇÃO: Buscar média de humor da equipe nos últimos 7 dias
+        // Agora usa CHAVE COMPOSTA (MATRÍCULA + CPF) para garantir dados corretos
+        const result = await pool.request()
+            .input('managerId', sql.Int, userId)
+            .input('department', sql.NVarChar, userDepartment)
+            .input('sevenDaysAgo', sql.Date, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
+            .query(`
+                SELECT 
+                    AVG(CAST(dm.score AS FLOAT)) as teamAverage,
+                    COUNT(DISTINCT dm.user_id) as teamMembers
+                FROM DailyMood dm
+                JOIN Users u ON dm.user_id = u.Id
+                INNER JOIN TAB_HIST_SRA s 
+                    ON u.Matricula = s.MATRICULA
+                    AND u.CPF = s.CPF  -- ✅ Chave composta: MATRÍCULA + CPF
+                INNER JOIN HIERARQUIA_CC h ON (
+                    (h.RESPONSAVEL_ATUAL = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                     AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_1_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_2_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_3_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_4_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                )
+                WHERE u.Departamento = @department
+                AND CAST(dm.created_at AS DATE) >= @sevenDaysAgo
+                AND u.IsActive = 1
+                AND s.STATUS_GERAL = 'ATIVO'
+                AND (
+                    TRIM(s.DEPARTAMENTO) = TRIM(h.DEPTO_ATUAL)
+                    OR TRIM(s.DEPARTAMENTO) = TRIM(h.DESCRICAO_ATUAL)
+                    OR s.MATRICULA = h.RESPONSAVEL_ATUAL
+                )
+            `);
+        
+        const metrics = {
+            teamAverage: result.recordset[0].teamAverage || 0,
+            teamMembers: result.recordset[0].teamMembers || 0
+        };
+        
+        res.json(metrics);
+    } catch (error) {
+        console.error('Erro ao buscar métricas da equipe:', error);
+        res.status(500).json({ error: 'Erro ao buscar métricas da equipe' });
+    }
+});
+
+// Buscar histórico de humor individual (últimos 5 dias)
+app.get('/api/humor/history', requireAuth, async (req, res) => {
+    try {
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('fiveDaysAgo', sql.Date, new Date(Date.now() - 5 * 24 * 60 * 60 * 1000))
+            .query(`
+                SELECT score, description, 
+                       updated_at as created_at
+                FROM DailyMood 
+                WHERE user_id = @userId 
+                AND CAST(created_at AS DATE) >= @fiveDaysAgo
+                ORDER BY created_at DESC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar histórico de humor:', error);
+        res.status(500).json({ error: 'Erro ao buscar histórico de humor' });
+    }
+});
+
+// Buscar histórico de humor da equipe (últimos 5 dias)
+app.get('/api/humor/team-history', requireAuth, requireManagerAccess, async (req, res) => {
+    try {
+        const userId = req.session.user.userId;
+        const userDepartment = req.session.user.departamento;
+        const pool = await sql.connect(dbConfig);
+        
+        // CORREÇÃO: Agora usa CHAVE COMPOSTA (MATRÍCULA + CPF)
+        const result = await pool.request()
+            .input('managerId', sql.Int, userId)
+            .input('department', sql.NVarChar, userDepartment)
+            .input('fiveDaysAgo', sql.Date, new Date(Date.now() - 5 * 24 * 60 * 60 * 1000))
+            .query(`
+                SELECT 
+                    dm.score,
+                    dm.description,
+                    dm.updated_at as created_at,
+                    u.NomeCompleto as user_name,
+                    u.Departamento as department
+                FROM DailyMood dm
+                JOIN Users u ON dm.user_id = u.Id
+                INNER JOIN TAB_HIST_SRA s 
+                    ON u.Matricula = s.MATRICULA
+                    AND u.CPF = s.CPF  -- ✅ Chave composta
+                INNER JOIN HIERARQUIA_CC h ON (
+                    (h.RESPONSAVEL_ATUAL = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                     AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_1_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_2_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_3_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_4_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                )
+                WHERE u.Departamento = @department
+                AND CAST(dm.created_at AS DATE) >= @fiveDaysAgo
+                AND u.IsActive = 1
+                AND s.STATUS_GERAL = 'ATIVO'
+                AND (
+                    TRIM(s.DEPARTAMENTO) = TRIM(h.DEPTO_ATUAL)
+                    OR TRIM(s.DEPARTAMENTO) = TRIM(h.DESCRICAO_ATUAL)
+                    OR s.MATRICULA = h.RESPONSAVEL_ATUAL
+                )
+                ORDER BY dm.created_at DESC
+            `);
+        
+        res.json(result.recordset);
+    } catch (error) {
+        console.error('Erro ao buscar histórico da equipe:', error);
+        res.status(500).json({ error: 'Erro ao buscar histórico da equipe' });
     }
 });
 
@@ -2331,7 +3069,7 @@ app.get('/api/humor/empresa', requireAuth, requireManagerAccess, async (req, res
                 dm.created_at,
                 u.NomeCompleto as user_name,
                 u.Departamento as department,
-                u.Cargo as position
+                u.Departamento as position
             FROM DailyMood dm
             JOIN Users u ON dm.user_id = u.Id
             WHERE 1=1
@@ -2447,58 +3185,325 @@ app.get('/api/humor/metrics', requireAuth, requireManagerAccess, async (req, res
     }
 });
 
-
-
 // ===== SISTEMA DE OBJETIVOS =====
 
 // Criar objetivo
 app.post('/api/objetivos', requireAuth, async (req, res) => {
     try {
-        const { titulo, descricao, responsavel_id, data_inicio, data_fim } = req.body;
+        const { titulo, descricao, responsavel_id, responsaveis_ids, data_inicio, data_fim } = req.body;
+        const userId = req.session.user.userId;
         
-        if (!titulo || !responsavel_id || !data_inicio || !data_fim) {
-            return res.status(400).json({ error: 'Campos obrigatórios: título, responsável, data início e data fim' });
+        // Suportar tanto responsavel_id (modo único) quanto responsaveis_ids (modo múltiplo)
+        let responsaveis = [];
+        if (responsaveis_ids && responsaveis_ids.length > 0) {
+            responsaveis = responsaveis_ids;
+        } else if (responsavel_id) {
+            responsaveis = [responsavel_id];
+        } else {
+            return res.status(400).json({ error: 'Campos obrigatórios: título, responsável(es), data início e data fim' });
+        }
+        
+        if (!titulo || responsaveis.length === 0 || !data_inicio || !data_fim) {
+            return res.status(400).json({ error: 'Campos obrigatórios: título, pelo menos um responsável, data início e data fim' });
         }
         
         const pool = await sql.connect(dbConfig);
-        const result = await pool.request()
-            .input('titulo', sql.VarChar, titulo)
-            .input('descricao', sql.Text, descricao)
-            .input('responsavelId', sql.Int, responsavel_id)
-            .input('dataInicio', sql.Date, new Date(data_inicio))
-            .input('dataFim', sql.Date, new Date(data_fim))
-            .input('criadoPor', sql.Int, req.session.user.userId)
+        
+        // Verificar permissões para cada responsável
+        for (const responsavelId of responsaveis) {
+            if (responsavelId != userId) {
+                // CORREÇÃO: Verificar se o usuário é gestor e se o responsável está na sua equipe
+                // Agora usa CHAVE COMPOSTA (MATRÍCULA + CPF)
+                const teamCheck = await pool.request()
+                    .input('managerId', sql.Int, userId)
+                    .input('responsavelId', sql.Int, responsavelId)
             .query(`
-                INSERT INTO Objetivos (titulo, descricao, responsavel_id, data_inicio, data_fim, criado_por)
+                        SELECT COUNT(*) as count
+                        FROM Users u
+                        INNER JOIN TAB_HIST_SRA s 
+                            ON u.Matricula = s.MATRICULA
+                            AND u.CPF = s.CPF  -- ✅ Chave composta
+                        INNER JOIN HIERARQUIA_CC h ON (
+                            (h.RESPONSAVEL_ATUAL = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                             AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                            OR (h.NIVEL_1_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                                AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                            OR (h.NIVEL_2_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                                AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                            OR (h.NIVEL_3_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                                AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                            OR (h.NIVEL_4_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                                AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                        )
+                        WHERE u.Id = @responsavelId 
+                        AND u.IsActive = 1
+                        AND s.STATUS_GERAL = 'ATIVO'
+                        AND (
+                            TRIM(s.DEPARTAMENTO) = TRIM(h.DEPTO_ATUAL)
+                            OR TRIM(s.DEPARTAMENTO) = TRIM(h.DESCRICAO_ATUAL)
+                            OR s.MATRICULA = h.RESPONSAVEL_ATUAL
+                        )
+                    `);
+                
+                if (teamCheck.recordset[0].count === 0) {
+                    return res.status(403).json({ error: 'Você só pode criar objetivos para si mesmo ou para membros da sua equipe' });
+                }
+            }
+        }
+        
+        // Definir status baseado na data de início
+        const hoje = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const dataInicioStr = data_inicio.split('T')[0]; // YYYY-MM-DD
+        
+        const status = dataInicioStr > hoje ? 'Agendado' : 'Ativo';
+        
+        console.log('Criando objetivo compartilhado:', { titulo, descricao, responsaveis, data_inicio, data_fim, userId, status });
+        
+        // Criar UM único objetivo
+        const objetivoResult = await pool.request()
+            .input('titulo', sql.NVarChar(255), titulo)
+            .input('descricao', sql.Text, descricao || '')
+            .input('dataInicio', sql.Date, data_inicio)
+            .input('dataFim', sql.Date, data_fim)
+            .input('criadoPor', sql.Int, userId)
+            .input('status', sql.NVarChar(50), status)
+            .input('primeiroResponsavel', sql.Int, responsaveis[0]) // Primeiro responsável para compatibilidade
+            .query(`
+                INSERT INTO Objetivos (titulo, descricao, data_inicio, data_fim, criado_por, status, progresso, responsavel_id, created_at, updated_at)
                 OUTPUT INSERTED.Id
-                VALUES (@titulo, @descricao, @responsavelId, @dataInicio, @dataFim, @criadoPor)
+                VALUES (@titulo, @descricao, @dataInicio, @dataFim, @criadoPor, @status, 0, @primeiroResponsavel, GETDATE(), GETDATE())
             `);
         
-        res.json({ success: true, id: result.recordset[0].Id });
+        const objetivoId = objetivoResult.recordset[0].Id;
+        
+        // Criar relacionamentos para cada responsável
+        for (const responsavelId of responsaveis) {
+            try {
+                await pool.request()
+                    .input('objetivoId', sql.Int, objetivoId)
+                    .input('responsavelId', sql.Int, responsavelId)
+                    .query(`
+                        INSERT INTO ObjetivoResponsaveis (objetivo_id, responsavel_id, created_at)
+                        VALUES (@objetivoId, @responsavelId, GETDATE())
+                    `);
+            } catch (foreignKeyError) {
+                // Se a tabela ObjetivoResponsaveis não existir ainda, vamos criá-la
+                console.log('Tabela ObjetivoResponsaveis ainda não existe, criando...');
+                await ensureObjetivosTablesExist(pool);
+                
+                await pool.request()
+                    .input('objetivoId', sql.Int, objetivoId)
+                    .input('responsavelId', sql.Int, responsavelId)
+                    .query(`
+                        INSERT INTO ObjetivoResponsaveis (objetivo_id, responsavel_id, created_at)
+                        VALUES (@objetivoId, @responsavelId, GETDATE())
+                    `);
+            }
+        }
+        
+        res.json({ success: true, id: objetivoId, shared: true, responsaveis: responsaveis });
     } catch (error) {
         console.error('Erro ao criar objetivo:', error);
         res.status(500).json({ error: 'Erro ao criar objetivo' });
     }
 });
 
-// Listar objetivos
-app.get('/api/objetivos', requireAuth, async (req, res) => {
+// Buscar filtros de objetivos
+app.get('/api/objetivos/filtros', requireAuth, async (req, res) => {
     try {
         const pool = await sql.connect(dbConfig);
         
-        const result = await pool.request()
-            .query(`
-                SELECT 
-                    o.*,
+        // Buscar status únicos
+        const statusResult = await pool.request().query(`
+            SELECT DISTINCT status FROM Objetivos WHERE status IS NOT NULL ORDER BY status
+        `);
+        
+        // Buscar responsáveis únicos
+        const responsaveisResult = await pool.request().query(`
+            SELECT DISTINCT u.Id, u.NomeCompleto 
+            FROM Objetivos o
+            JOIN Users u ON o.responsavel_id = u.Id
+            WHERE u.IsActive = 1
+            ORDER BY u.NomeCompleto
+        `);
+        
+        res.json({
+            status: statusResult.recordset.map(r => r.status),
+            responsaveis: responsaveisResult.recordset.map(r => ({
+                id: r.Id,
+                nome: r.NomeCompleto
+            }))
+        });
+    } catch (error) {
+        console.error('Erro ao buscar filtros de objetivos:', error);
+        res.status(500).json({ error: 'Erro ao buscar filtros de objetivos' });
+    }
+});
+
+// Listar objetivos
+app.get('/api/objetivos', requireAuth, async (req, res) => {
+    try {
+        const userId = req.session.user.userId;
+        const pool = await sql.connect(dbConfig);
+        
+        // Obter parâmetros de busca e filtros
+        const { search, responsavel, status } = req.query;
+        
+        // Parâmetros de busca recebidos: search (título/descrição) e responsavel (nome)
+        
+        // Garantir que todas as tabelas existam antes de usar
+        await ensureObjetivosTablesExist(pool);
+        
+        // Primeiro, atualizar status de objetivos expirados
+        await pool.request().query(`
+            UPDATE Objetivos 
+            SET status = 'Expirado' 
+            WHERE data_fim < CAST(GETDATE() AS DATE) 
+            AND status = 'Ativo'
+        `);
+        
+        // Construir cláusulas de filtro
+        let whereConditions = ['(o.responsavel_id = @userId OR o.criado_por = @userId OR orl.responsavel_id = @userId)'];
+        
+        // Filtro de busca de texto (título ou descrição)
+        if (search) {
+            whereConditions.push(`(o.titulo LIKE @searchTerm OR o.descricao LIKE @searchTerm)`);
+        }
+        
+        // Filtro de busca por responsável (incluindo responsáveis compartilhados)
+        if (responsavel) {
+            whereConditions.push(`(
+                u.NomeCompleto LIKE @responsavelTerm 
+                OR EXISTS (
+                    SELECT 1 FROM ObjetivoResponsaveis orresp 
+                    INNER JOIN Users uresp ON orresp.responsavel_id = uresp.Id 
+                    WHERE orresp.objetivo_id = o.Id 
+                    AND uresp.NomeCompleto LIKE @responsavelTerm
+                )
+            )`);
+        }
+        
+        // Filtro por status dos objetivos
+        if (status) {
+            whereConditions.push(`o.status = @statusFilter`);
+        }
+        
+        // Buscar objetivos com responsáveis compartilhados
+        let query;
+        try {
+            // Tentar usar a query com ObjetivoResponsaveis
+            query = `
+                SELECT DISTINCT
+                    o.Id, o.titulo, o.data_inicio, o.data_fim, o.status, o.progresso, o.created_at, o.updated_at,
+                    o.responsavel_id, o.criado_por,
+                    CONVERT(NVARCHAR(MAX), o.descricao) as descricao,
                     u.NomeCompleto as responsavel_nome,
-                    c.NomeCompleto as criador_nome
+                    c.NomeCompleto as criador_nome,
+                    CASE 
+                        WHEN o.criado_por = @userId THEN 1 
+                        ELSE 0 
+                    END as can_edit,
+                    CASE 
+                        WHEN o.responsavel_id = @userId 
+                        OR EXISTS (SELECT 1 FROM ObjetivoResponsaveis oesp WHERE oesp.objetivo_id = o.Id AND oesp.responsavel_id = @userId)
+                        THEN 1 
+                        ELSE 0 
+                    END as is_responsible
                 FROM Objetivos o
-                JOIN Users u ON o.responsavel_id = u.Id
-                JOIN Users c ON o.criado_por = c.Id
+                LEFT JOIN Users u ON o.responsavel_id = u.Id
+                LEFT JOIN Users c ON o.criado_por = c.Id
+                LEFT JOIN ObjetivoResponsaveis orl ON orl.objetivo_id = o.Id
+                ${whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : ''}
                 ORDER BY o.created_at DESC
-            `);
+            `;
+            
+            const request = pool.request()
+                .input('userId', sql.Int, userId);
+            
+            // Adicionar parâmetros dinamicamente baseados nos filtros
+            if (search) {
+                request.input('searchTerm', sql.NVarChar, `%${search}%`);
+            }
+            if (responsavel) {
+                request.input('responsavelTerm', sql.NVarChar, `%${responsavel}%`);
+            }
+            if (status) {
+                request.input('statusFilter', sql.NVarChar, status);
+            }
+            
+            console.log('🔍 Query final construída:', query);
+            console.log('🔍 Condições WHERE:', whereConditions);
+            
+            const result = await request.query(query);
+            
+            // Buscar responsáveis compartilhados para cada objetivo
+            for (let objetivo of result.recordset) {
+                try {
+                    const sharedResponsaveis = await pool.request()
+                        .input('objetivoId', sql.Int, objetivo.Id)
+                        .query(`
+                            SELECT u.NomeCompleto as nome_responsavel, orr.responsavel_id
+                            FROM ObjetivoResponsaveis orr
+                            JOIN Users u ON orr.responsavel_id = u.Id
+                            WHERE orr.objetivo_id = @objetivoId
+                        `);
+                    objetivo.shared_responsaveis = sharedResponsaveis.recordset;
+                } catch (error) {
+                    console.log('Tabela ObjetivoResponsaveis não encontrada ao buscar responsáveis compartilhados para objetivo:', objetivo.Id);
+                    objetivo.shared_responsaveis = [];
+                }
+            }
+                
+            res.json(result.recordset);
+            return;
+        } catch (error) {
+            // Fallback para busca sem responsáveis compartilhados
+            console.log('Usando fallback para objetivos sem responsáveis compartilhados');
+        
+        // Construir query de fallback com filtros
+        let fallbackWhereConditions = ['(o.responsavel_id = @userId OR o.criado_por = @userId)'];
+        
+        // Aplicar filtro de status no fallback
+        if (status) {
+            fallbackWhereConditions.push('o.status = @statusFilter');
+        }
+        
+        const baseQuery = `
+                    SELECT DISTINCT
+                        o.Id, o.titulo, o.data_inicio, o.data_fim, o.status, o.progresso, o.created_at, o.updated_at,
+                        o.responsavel_id, o.criado_por,
+                        CONVERT(NVARCHAR(MAX), o.descricao) as descricao,
+                        u.NomeCompleto as responsavel_nome,
+                        c.NomeCompleto as criador_nome,
+                        CASE 
+                            WHEN o.criado_por = @userId THEN 1 
+                            ELSE 0 
+                        END as can_edit,
+                        CASE 
+                            WHEN o.responsavel_id = @userId THEN 1 
+                            ELSE 0 
+                        END as is_responsible
+                FROM Objetivos o
+                    LEFT JOIN Users u ON o.responsavel_id = u.Id
+                    LEFT JOIN Users c ON o.criado_por = c.Id
+                    WHERE ${fallbackWhereConditions.join(' AND ')}
+                ORDER BY o.created_at DESC
+            `;
+        
+        const request = pool.request().input('userId', sql.Int, userId);
+        if (status) {
+            request.input('statusFilter', sql.NVarChar, status);
+        }
+        
+        const result = await request.query(baseQuery);
+            
+            // Adicionar lista vazia para responsáveis compartilhados no fallback
+            result.recordset.forEach(objetivo => {
+                objetivo.shared_responsaveis = [];
+            });
         
         res.json(result.recordset);
+        }
     } catch (error) {
         console.error('Erro ao buscar objetivos:', error);
         res.status(500).json({ error: 'Erro ao buscar objetivos' });
@@ -2519,10 +3524,32 @@ app.get('/api/objetivos/:id', requireAuth, async (req, res) => {
                     u.NomeCompleto as responsavel_nome,
                     c.NomeCompleto as criador_nome
                 FROM Objetivos o
-                JOIN Users u ON o.responsavel_id = u.Id
-                JOIN Users c ON o.criado_por = c.Id
+                LEFT JOIN Users u ON o.responsavel_id = u.Id
+                LEFT JOIN Users c ON o.criado_por = c.Id
                 WHERE o.Id = @objetivoId
             `);
+        
+        // Buscar responsáveis adicionais da tabela ObjetivoResponsaveis (se a tabela existir)
+        if (result.recordset.length > 0) {
+            try {
+                const sharedResponsaveis = await pool.request()
+                    .input('objetivoId', sql.Int, parseInt(id))
+                    .query(`
+                        SELECT u.NomeCompleto as nome_responsavel, orr.responsavel_id
+                        FROM ObjetivoResponsaveis orr
+                        JOIN Users u ON orr.responsavel_id = u.Id
+                        WHERE orr.objetivo_id = @objetivoId
+                    `);
+                
+                // Adicionar informações dos responsáveis compartilhados ao resultado
+                console.log('📋 Responsáveis compartilhados encontrados:', sharedResponsaveis.recordset);
+                result.recordset[0].shared_responsaveis = sharedResponsaveis.recordset;
+                console.log('✅ Dados do objetivo com responsáveis compartilhados:', result.recordset[0]);
+            } catch (error) {
+                console.log('Tabela ObjetivoResponsaveis não encontrada ao buscar responsáveis compartilhados');
+                result.recordset[0].shared_responsaveis = [];
+            }
+        }
         
         if (result.recordset.length === 0) {
             return res.status(404).json({ error: 'Objetivo não encontrado' });
@@ -2542,6 +3569,16 @@ app.post('/api/objetivos/:id/checkin', requireAuth, async (req, res) => {
         const { progresso, observacoes } = req.body;
         const userId = req.session.user.userId;
         
+        console.log('🔍 Check-in - Parâmetros recebidos:', { id, progresso, observacoes, userId });
+        console.log('🔍 Check-in - Tipo do ID:', typeof id, 'Valor:', id);
+        
+        // Validar se o ID é um número válido
+        const objetivoId = parseInt(id);
+        if (isNaN(objetivoId)) {
+            console.error('❌ Check-in - ID inválido:', id);
+            return res.status(400).json({ error: 'ID do objetivo inválido' });
+        }
+        
         if (progresso === undefined || progresso < 0 || progresso > 100) {
             return res.status(400).json({ error: 'Progresso deve ser entre 0 e 100' });
         }
@@ -2551,18 +3588,77 @@ app.post('/api/objetivos/:id/checkin', requireAuth, async (req, res) => {
         // Verificar e criar tabelas se necessário
         await ensureObjetivosTablesExist(pool);
         
-        // Verificar se o objetivo existe
-        const objetivoExists = await pool.request()
-            .input('objetivoId', sql.Int, id)
-            .query('SELECT Id FROM Objetivos WHERE Id = @objetivoId');
+        // Verificar se o objetivo existe e obter informações
+        const objetivoInfo = await pool.request()
+            .input('objetivoId', sql.Int, objetivoId)
+            .query(`
+                SELECT Id, data_inicio, status, responsavel_id, criado_por
+                FROM Objetivos 
+                WHERE Id = @objetivoId
+            `);
         
-        if (objetivoExists.recordset.length === 0) {
+        if (objetivoInfo.recordset.length === 0) {
             return res.status(404).json({ error: 'Objetivo não encontrado' });
         }
         
+        const objetivo = objetivoInfo.recordset[0];
+        
+        // Verificar se o objetivo já começou (data de início <= hoje)
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+        const dataInicio = new Date(objetivo.data_inicio);
+        dataInicio.setHours(0, 0, 0, 0);
+        
+        if (dataInicio > hoje) {
+            return res.status(400).json({ 
+                error: 'Não é possível fazer check-in em objetivos que ainda não começaram. Data de início: ' + 
+                       new Date(objetivo.data_inicio).toLocaleDateString('pt-BR')
+            });
+        }
+        
+        // Verificar se o usuário é responsável pelo objetivo (do campo direto ou da tabela de relacionamento)
+        const isResponsableDirect = objetivo.responsavel_id === userId;
+        let isResponsableShared = false;
+        
+        // Tentar verificar se existe na tabela de responsáveis compartilhados se ela existir
+        try {
+            const responsavelSharedResult = await pool.request()
+                .input('objetivoId', sql.Int, objetivoId)
+                .input('userId', sql.Int, userId)
+                .query(`
+                    SELECT COUNT(*) as count
+                    FROM ObjetivoResponsaveis 
+                    WHERE objetivo_id = @objetivoId AND responsavel_id = @userId
+                `);
+            
+            isResponsableShared = responsavelSharedResult.recordset[0].count > 0;
+        } catch (error) {
+            console.log('Tabela ObjetivoResponsaveis não encontrada, ignorando responsáveis compartilhados no check-in');
+        }
+        
+        if (!isResponsableDirect && !isResponsableShared) {
+            return res.status(403).json({ error: 'Apenas os responsáveis pelo objetivo podem fazer check-in' });
+        }
+        
+        // Verificar se já fez check-in hoje neste objetivo
+        const today = new Date().toISOString().split('T')[0];
+        const checkinToday = await pool.request()
+            .input('objetivoId', sql.Int, objetivoId)
+            .input('userId', sql.Int, userId)
+            .input('today', sql.Date, today)
+            .query(`
+                SELECT COUNT(*) as count
+                FROM ObjetivoCheckins 
+                WHERE objetivo_id = @objetivoId 
+                AND user_id = @userId 
+                AND CAST(created_at AS DATE) = @today
+            `);
+        
+        const isFirstCheckinToday = checkinToday.recordset[0].count === 0;
+        
         // Registrar check-in
         await pool.request()
-            .input('objetivoId', sql.Int, id)
+            .input('objetivoId', sql.Int, objetivoId)
             .input('userId', sql.Int, userId)
             .input('progresso', sql.Decimal, progresso)
             .input('observacoes', sql.Text, observacoes || '')
@@ -2573,7 +3669,7 @@ app.post('/api/objetivos/:id/checkin', requireAuth, async (req, res) => {
         
         // Atualizar progresso do objetivo
         await pool.request()
-            .input('objetivoId', sql.Int, id)
+            .input('objetivoId', sql.Int, objetivoId)
             .input('progresso', sql.Decimal, progresso)
             .query(`
                 UPDATE Objetivos 
@@ -2581,7 +3677,48 @@ app.post('/api/objetivos/:id/checkin', requireAuth, async (req, res) => {
                 WHERE Id = @objetivoId
             `);
         
-        res.json({ success: true, message: 'Check-in registrado com sucesso' });
+        // Verificar se o objetivo deve ser concluído
+        let statusUpdate = '';
+        if (progresso >= 100) {
+            // Buscar informações do objetivo para verificar quem criou
+            const objetivoInfo = await pool.request()
+                .input('objetivoId', sql.Int, objetivoId)
+                .query(`
+                    SELECT criado_por, responsavel_id, status
+                    FROM Objetivos 
+                    WHERE Id = @objetivoId
+                `);
+            
+            const objetivo = objetivoInfo.recordset[0];
+            
+            if (objetivo.criado_por === userId) {
+                // Objetivo criado pelo próprio usuário - concluir automaticamente
+                await pool.request()
+                    .input('objetivoId', sql.Int, objetivoId)
+                    .query(`UPDATE Objetivos SET status = 'Concluído' WHERE Id = @objetivoId`);
+                statusUpdate = 'Objetivo concluído automaticamente!';
+            } else {
+                // Objetivo criado por gestor - solicitar aprovação
+                await pool.request()
+                    .input('objetivoId', sql.Int, objetivoId)
+                    .query(`UPDATE Objetivos SET status = 'Aguardando Aprovação' WHERE Id = @objetivoId`);
+                statusUpdate = 'Objetivo marcado para aprovação do gestor!';
+            }
+        }
+        
+        // Adicionar pontos por check-in (primeira vez no dia) - 5 pontos
+        let pointsResult = { success: false, points: 0, message: '' };
+        if (isFirstCheckinToday) {
+            pointsResult = await addPointsToUser(userId, 'checkin_objetivo', 5, pool);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Check-in registrado com sucesso',
+            statusUpdate: statusUpdate,
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message
+        });
     } catch (error) {
         console.error('Erro ao registrar check-in:', error);
         res.status(500).json({ error: 'Erro ao registrar check-in: ' + error.message });
@@ -2613,7 +3750,256 @@ app.get('/api/objetivos/:id/checkins', requireAuth, async (req, res) => {
     }
 });
 
+// Atualizar objetivo
+
+// Aprovar conclusão de objetivo (apenas para gestores)
+app.post('/api/objetivos/:id/approve', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se o objetivo existe e se o usuário é o criador (gestor)
+        const objetivoCheck = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT criado_por, status, responsavel_id
+                FROM Objetivos 
+                WHERE Id = @objetivoId
+            `);
+        
+        if (objetivoCheck.recordset.length === 0) {
+            return res.status(404).json({ error: 'Objetivo não encontrado' });
+        }
+        
+        const objetivo = objetivoCheck.recordset[0];
+        
+        if (objetivo.criado_por !== userId) {
+            return res.status(403).json({ error: 'Apenas o gestor que criou o objetivo pode aprová-lo' });
+        }
+        
+        if (objetivo.status !== 'Aguardando Aprovação') {
+            return res.status(400).json({ error: 'Este objetivo não está aguardando aprovação' });
+        }
+        
+        // Aprovar objetivo
+        await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .query(`UPDATE Objetivos SET status = 'Concluído' WHERE Id = @objetivoId`);
+        
+        // Dar pontos ao responsável pelo objetivo (10 pontos)
+        let pointsResult = { success: false, points: 0, message: '' };
+        if (objetivo.responsavel_id) {
+            pointsResult = await addPointsToUser(objetivo.responsavel_id, 'objetivo_aprovado', 10, pool);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Objetivo aprovado e concluído com sucesso',
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message
+        });
+    } catch (error) {
+        console.error('Erro ao aprovar objetivo:', error);
+        res.status(500).json({ error: 'Erro ao aprovar objetivo' });
+    }
+});
+
+// Rejeitar objetivo
+app.post('/api/objetivos/:id/reject', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se o objetivo existe e se o usuário é o criador (gestor)
+        const objetivoCheck = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT criado_por, status, progresso
+                FROM Objetivos 
+                WHERE Id = @objetivoId
+            `);
+        
+        if (objetivoCheck.recordset.length === 0) {
+            return res.status(404).json({ error: 'Objetivo não encontrado' });
+        }
+        
+        const objetivo = objetivoCheck.recordset[0];
+        
+        if (objetivo.criado_por !== userId) {
+            return res.status(403).json({ error: 'Apenas o gestor que criou o objetivo pode rejeitá-lo' });
+        }
+        
+        if (objetivo.status !== 'Aguardando Aprovação') {
+            return res.status(400).json({ error: 'Este objetivo não está aguardando aprovação' });
+        }
+        
+        // Buscar todos os check-ins para debug
+        const allCheckins = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .query(`
+                SELECT progresso, created_at
+                FROM ObjetivoCheckins 
+                WHERE objetivo_id = @objetivoId
+                ORDER BY created_at DESC
+            `);
+        
+        console.log('🔍 Rejeição - Todos os check-ins:', allCheckins.recordset);
+        
+        // Buscar o último check-in que não seja 100% (ignorando todas as solicitações de conclusão)
+        // Isso garante que mesmo se o usuário solicitar aprovação múltiplas vezes, sempre volta para o progresso real anterior
+        const previousCheckin = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .query(`
+                SELECT TOP 1 progresso, created_at
+                FROM ObjetivoCheckins 
+                WHERE objetivo_id = @objetivoId 
+                AND progresso < 100
+                ORDER BY created_at DESC
+            `);
+        
+        // Definir o progresso anterior (ou 0 se não houver check-ins anteriores)
+        const previousProgress = previousCheckin.recordset.length > 0 ? previousCheckin.recordset[0].progresso : 0;
+        
+        console.log('🔄 Rejeição - Check-in anterior encontrado:', previousCheckin.recordset[0] || 'Nenhum');
+        console.log('🔄 Rejeição - Progresso anterior encontrado:', previousProgress);
+        
+        // Rejeitar objetivo - reverter progresso e voltar para Ativo
+        await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .input('previousProgress', sql.Decimal(5,2), previousProgress)
+            .query(`
+                UPDATE Objetivos 
+                SET status = 'Ativo', progresso = @previousProgress, updated_at = GETDATE()
+                WHERE Id = @objetivoId
+            `);
+        
+        res.json({ 
+            success: true, 
+            message: `Objetivo rejeitado. Progresso revertido para ${previousProgress}%`,
+            previousProgress: previousProgress
+        });
+    } catch (error) {
+        console.error('Erro ao rejeitar objetivo:', error);
+        res.status(500).json({ error: 'Erro ao rejeitar objetivo' });
+    }
+});
+
+// Excluir objetivo
+app.delete('/api/objetivos/:id', requireAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.session.user.userId;
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se o objetivo existe e se o usuário tem permissão para excluí-lo
+        const objetivoCheck = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .input('userId', sql.Int, userId)
+            .query(`
+                SELECT criado_por, status
+                FROM Objetivos 
+                WHERE Id = @objetivoId
+            `);
+        
+        if (objetivoCheck.recordset.length === 0) {
+            return res.status(404).json({ error: 'Objetivo não encontrado' });
+        }
+        
+        const objetivo = objetivoCheck.recordset[0];
+        
+        // Apenas o criador pode excluir
+        if (objetivo.criado_por !== userId) {
+            return res.status(403).json({ error: 'Apenas o criador do objetivo pode excluí-lo' });
+        }
+        
+        // Excluir check-ins primeiro
+        await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .query(`DELETE FROM ObjetivoCheckins WHERE objetivo_id = @objetivoId`);
+        
+        // Excluir objetivo
+        await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .query(`DELETE FROM Objetivos WHERE Id = @objetivoId`);
+        
+        res.json({ success: true, message: 'Objetivo excluído com sucesso' });
+    } catch (error) {
+        console.error('Erro ao excluir objetivo:', error);
+        res.status(500).json({ error: 'Erro ao excluir objetivo' });
+    }
+});
+
 // ===== SISTEMA DE GAMIFICAÇÃO =====
+
+// Função para verificar se o usuário já ganhou pontos por uma ação no dia
+async function hasEarnedPointsToday(userId, action, pool) {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const result = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('action', sql.VarChar, action)
+            .input('today', sql.Date, today)
+            .query(`
+                SELECT COUNT(*) as count
+                FROM Gamification 
+                WHERE UserId = @userId 
+                AND Action = @action 
+                AND CAST(CreatedAt AS DATE) = @today
+            `);
+        
+        return result.recordset[0].count > 0;
+    } catch (error) {
+        console.error('Erro ao verificar pontos do dia:', error);
+        return false;
+    }
+}
+
+// Função para adicionar pontos ao usuário
+async function addPointsToUser(userId, action, points, pool) {
+    try {
+        // Verificar se já ganhou pontos por esta ação hoje
+        const alreadyEarned = await hasEarnedPointsToday(userId, action, pool);
+        if (alreadyEarned) {
+            return { success: false, message: 'Você já ganhou pontos por esta ação hoje' };
+        }
+
+        // Adicionar pontos na tabela de gamificação
+        await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('action', sql.VarChar, action)
+            .input('points', sql.Int, points)
+            .query(`
+                INSERT INTO Gamification (UserId, Action, Points, CreatedAt)
+                VALUES (@userId, @action, @points, GETDATE())
+            `);
+
+        // Atualizar total de pontos do usuário
+        await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('points', sql.Int, points)
+            .query(`
+                IF EXISTS (SELECT 1 FROM UserPoints WHERE UserId = @userId)
+                    UPDATE UserPoints 
+                    SET TotalPoints = TotalPoints + @points, LastUpdated = GETDATE()
+                    WHERE UserId = @userId
+                ELSE
+                    INSERT INTO UserPoints (UserId, TotalPoints, LastUpdated)
+                    VALUES (@userId, @points, GETDATE())
+            `);
+
+        return { success: true, points: points };
+    } catch (error) {
+        console.error('Erro ao adicionar pontos:', error);
+        return { success: false, message: 'Erro ao adicionar pontos' };
+    }
+}
 
 // Buscar pontos do usuário
 app.get('/api/gamification/points', requireAuth, async (req, res) => {
@@ -2624,7 +4010,7 @@ app.get('/api/gamification/points', requireAuth, async (req, res) => {
         const result = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`
-                SELECT TotalPoints, LumicoinBalance, LastUpdated
+                SELECT TotalPoints, LastUpdated
                 FROM UserPoints 
                 WHERE UserId = @userId
             `);
@@ -2632,7 +4018,7 @@ app.get('/api/gamification/points', requireAuth, async (req, res) => {
         if (result.recordset.length > 0) {
             res.json(result.recordset[0]);
         } else {
-            res.json({ TotalPoints: 0, LumicoinBalance: 0, LastUpdated: null });
+            res.json({ TotalPoints: 0, LastUpdated: null });
         }
     } catch (error) {
         console.error('Erro ao buscar pontos:', error);
@@ -2640,34 +4026,72 @@ app.get('/api/gamification/points', requireAuth, async (req, res) => {
     }
 });
 
-// Buscar ranking mensal
-app.get('/api/gamification/ranking', requireAuth, async (req, res) => {
+// Buscar leaderboard de gamificação (top 10 + posição do usuário)
+app.get('/api/gamification/leaderboard', requireAuth, async (req, res) => {
     try {
-        const { month, year } = req.query;
-        const currentMonth = month || new Date().getMonth() + 1;
-        const currentYear = year || new Date().getFullYear();
-        
+        const { topUsers = 10 } = req.query;
+        const userId = req.session.user.userId;
         const pool = await sql.connect(dbConfig);
-        const result = await pool.request()
-            .input('month', sql.Int, currentMonth)
-            .input('year', sql.Int, currentYear)
+        
+        // Buscar top usuários
+        const topUsersResult = await pool.request()
+            .input('topUsers', sql.Int, parseInt(topUsers))
             .query(`
-                SELECT 
-                    ur.Rank,
+                SELECT TOP (@topUsers) 
+                    u.Id,
                     u.NomeCompleto,
                     u.Departamento,
-                    ur.TotalPoints,
-                    ur.LumicoinEarned
-                FROM UserRankings ur
-                JOIN Users u ON ur.UserId = u.Id
-                WHERE ur.Month = @month AND ur.Year = @year
-                ORDER BY ur.Rank ASC
+                    u.DescricaoDepartamento,
+                    up.TotalPoints
+                FROM UserPoints up
+                JOIN Users u ON up.UserId = u.Id
+                ORDER BY up.TotalPoints DESC
             `);
         
-        res.json(result.recordset);
+        console.log('Top usuários encontrados:', topUsersResult.recordset);
+        
+        // Verificar se há dados na tabela UserPoints
+        const checkUserPoints = await pool.request()
+            .query(`
+                SELECT COUNT(*) as total FROM UserPoints
+            `);
+        console.log('Total de registros na tabela UserPoints:', checkUserPoints.recordset[0].total);
+        
+        // Buscar posição do usuário atual entre todos os usuários com pontos
+        const userRankingResult = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query(`
+                WITH UserRanking AS (
+                    SELECT 
+                        up.UserId,
+                        up.TotalPoints,
+                        ROW_NUMBER() OVER (ORDER BY up.TotalPoints DESC) as Position
+                    FROM UserPoints up
+                    WHERE up.TotalPoints > 0
+                )
+                SELECT 
+                    ur.TotalPoints,
+                    ur.Position
+                FROM UserRanking ur
+                WHERE ur.UserId = @userId
+            `);
+        
+        const userRanking = userRankingResult.recordset.length > 0 ? {
+            position: userRankingResult.recordset[0].Position,
+            totalPoints: userRankingResult.recordset[0].TotalPoints
+        } : {
+            position: null,
+            totalPoints: 0,
+            hasPoints: false
+        };
+        
+        res.json({
+            leaderboard: topUsersResult.recordset,
+            userRanking: userRanking
+        });
     } catch (error) {
-        console.error('Erro ao buscar ranking:', error);
-        res.status(500).json({ error: 'Erro ao buscar ranking' });
+        console.error('Erro ao buscar leaderboard:', error);
+        res.status(500).json({ error: 'Erro ao buscar leaderboard' });
     }
 });
 
@@ -2690,440 +4114,6 @@ app.get('/api/gamification/history', requireAuth, async (req, res) => {
     } catch (error) {
         console.error('Erro ao buscar histórico:', error);
         res.status(500).json({ error: 'Erro ao buscar histórico' });
-    }
-});
-
-
-
-// ===== SISTEMA DE AVALIAÇÕES DE 45 E 90 DIAS =====
-
-// Criar avaliação (apenas gestores)
-app.post('/api/avaliacoes', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const { 
-            colaborador_id, 
-            tipo_avaliacao, // '45_dias' ou '90_dias'
-            data_limite,
-            observacoes_gestor
-        } = req.body;
-        
-        if (!colaborador_id || !tipo_avaliacao) {
-            return res.status(400).json({ error: 'Colaborador e tipo de avaliação são obrigatórios' });
-        }
-        
-        const pool = await sql.connect(dbConfig);
-        
-        // Criar a avaliação principal
-        const result = await pool.request()
-            .input('colaboradorId', sql.Int, colaborador_id)
-            .input('tipoAvaliacao', sql.VarChar, tipo_avaliacao)
-            .input('dataLimite', sql.DateTime, data_limite ? new Date(data_limite) : null)
-            .input('observacoesGestor', sql.Text, observacoes_gestor || '')
-            .input('criadoPor', sql.Int, req.session.user.userId)
-            .input('status', sql.VarChar, 'Pendente')
-            .query(`
-                INSERT INTO AvaliacoesPeriodicas (colaborador_id, tipo_avaliacao, data_limite, observacoes_gestor, criado_por, status, data_criacao)
-                OUTPUT INSERTED.Id
-                VALUES (@colaboradorId, @tipoAvaliacao, @dataLimite, @observacoesGestor, @criadoPor, @status, GETDATE())
-            `);
-        
-        const avaliacaoId = result.recordset[0].Id;
-        
-        // Inserir as perguntas padrão baseadas no tipo de avaliação
-        const perguntas = getPerguntasPadrao(tipo_avaliacao);
-        
-        for (let i = 0; i < perguntas.length; i++) {
-            const pergunta = perguntas[i];
-            await pool.request()
-                .input('avaliacaoId', sql.Int, avaliacaoId)
-                .input('categoria', sql.VarChar, pergunta.categoria)
-                .input('pergunta', sql.Text, pergunta.texto)
-                .input('tipo', sql.VarChar, pergunta.tipo)
-                .input('ordem', sql.Int, i + 1)
-                .query(`
-                    INSERT INTO AvaliacaoPerguntas (avaliacao_id, categoria, pergunta, tipo, ordem)
-                    VALUES (@avaliacaoId, @categoria, @pergunta, @tipo, @ordem)
-                `);
-        }
-        
-        res.json({ success: true, id: avaliacaoId, message: 'Avaliação criada com sucesso' });
-    } catch (error) {
-        console.error('Erro ao criar avaliação:', error);
-        res.status(500).json({ error: 'Erro ao criar avaliação' });
-    }
-});
-
-// Função para obter perguntas padrão baseadas no tipo de avaliação
-function getPerguntasPadrao(tipoAvaliacao) {
-    const perguntas = [
-        {
-            categoria: 'Integração',
-            texto: 'É acessível e acolhedor com todas as pessoas, tratando a todos com respeito e cordialidade.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Adaptação',
-            texto: 'É pontual no cumprimento de sua jornada de trabalho (faltas, atrasos ou saídas antecipadas).',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Adaptação',
-            texto: 'Identifica oportunidades que contribuam para o desenvolvimento do Setor.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Adaptação',
-            texto: 'Mantém a calma frente a diversidade do ambiente e à novos desafios, buscando interagir de forma adequada às mudanças.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Valores',
-            texto: 'É respeitoso com as pessoas contribuindo com um ambiente de trabalho saudável.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Valores',
-            texto: 'Tem caráter inquestionável, age com honestidade e integridade no relacionamento com gestores, colegas, prestadores de serviço, fornecedores e demais profissionais que venha a ter contato na empresa.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Valores',
-            texto: 'Exerce suas atividades com transparência e estrita observância às leis, aos princípios e as diretrizes da empresa.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Orientação para resultados',
-            texto: 'Mantém a produtividade e a motivação diante de situações sobre pressão.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Orientação para resultados',
-            texto: 'Age com engajamento para atingir os objetivos e metas.',
-            tipo: 'escala'
-        },
-        {
-            categoria: 'Orientação para resultados',
-            texto: 'Capacidade para concretizar as tarefas que lhe são solicitadas, com o alcance de objetivos e de forma comprometida com o resultado de seu Setor.',
-            tipo: 'escala'
-        }
-    ];
-    
-    return perguntas;
-}
-
-// Criar avaliação personalizada (apenas gestores)
-app.post('/api/avaliacoes/personalizada', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const { 
-            colaborador_id, 
-            tipo_avaliacao,
-            data_limite,
-            observacoes_gestor,
-            titulo,
-            descricao,
-            perguntas
-        } = req.body;
-        
-        if (!colaborador_id || !tipo_avaliacao || !perguntas || perguntas.length === 0) {
-            return res.status(400).json({ error: 'Colaborador, tipo de avaliação e perguntas são obrigatórios' });
-        }
-        
-        const pool = await sql.connect(dbConfig);
-        
-        // Criar a avaliação principal
-        const result = await pool.request()
-            .input('colaboradorId', sql.Int, colaborador_id)
-            .input('tipoAvaliacao', sql.VarChar, tipo_avaliacao)
-            .input('dataLimite', sql.DateTime, data_limite ? new Date(data_limite) : null)
-            .input('observacoesGestor', sql.Text, observacoes_gestor || '')
-            .input('criadoPor', sql.Int, req.session.user.userId)
-            .input('status', sql.VarChar, 'Pendente')
-            .input('titulo', sql.VarChar, titulo || 'Avaliação Personalizada')
-            .input('descricao', sql.Text, descricao || '')
-            .query(`
-                INSERT INTO AvaliacoesPeriodicas (colaborador_id, tipo_avaliacao, data_limite, observacoes_gestor, criado_por, status, data_criacao, titulo, descricao)
-                OUTPUT INSERTED.Id
-                VALUES (@colaboradorId, @tipoAvaliacao, @dataLimite, @observacoesGestor, @criadoPor, @status, GETDATE(), @titulo, @descricao)
-            `);
-        
-        const avaliacaoId = result.recordset[0].Id;
-        
-        // Inserir as perguntas personalizadas
-        for (let i = 0; i < perguntas.length; i++) {
-            const pergunta = perguntas[i];
-            await pool.request()
-                .input('avaliacaoId', sql.Int, avaliacaoId)
-                .input('categoria', sql.VarChar, pergunta.categoria)
-                .input('pergunta', sql.Text, pergunta.pergunta)
-                .input('tipo', sql.VarChar, pergunta.tipo)
-                .input('ordem', sql.Int, pergunta.ordem || i + 1)
-                .query(`
-                    INSERT INTO AvaliacaoPerguntas (avaliacao_id, categoria, pergunta, tipo, ordem)
-                    VALUES (@avaliacaoId, @categoria, @pergunta, @tipo, @ordem)
-                `);
-        }
-        
-        res.json({ success: true, id: avaliacaoId, message: 'Avaliação personalizada criada com sucesso' });
-    } catch (error) {
-        console.error('Erro ao criar avaliação personalizada:', error);
-        res.status(500).json({ error: 'Erro ao criar avaliação personalizada' });
-    }
-});
-
-// Listar avaliações do usuário (como colaborador)
-app.get('/api/avaliacoes/colaborador', requireAuth, async (req, res) => {
-    try {
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        const result = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    ap.*,
-                    u.NomeCompleto as gestor_nome,
-                    u.Departamento as gestor_departamento,
-                    DATEDIFF(day, GETDATE(), ap.data_limite) as dias_restantes
-                FROM AvaliacoesPeriodicas ap
-                JOIN Users u ON ap.criado_por = u.Id
-                WHERE ap.colaborador_id = @userId
-                ORDER BY ap.data_criacao DESC
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar avaliações do colaborador:', error);
-        res.status(500).json({ error: 'Erro ao buscar avaliações' });
-    }
-});
-
-// Listar avaliações criadas pelo gestor
-app.get('/api/avaliacoes/gestor', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        const result = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    ap.*,
-                    u.NomeCompleto as colaborador_nome,
-                    u.Departamento as colaborador_departamento,
-                    u.Cargo as colaborador_cargo,
-                    DATEDIFF(day, GETDATE(), ap.data_limite) as dias_restantes
-                FROM AvaliacoesPeriodicas ap
-                JOIN Users u ON ap.colaborador_id = u.Id
-                WHERE ap.criado_por = @userId
-                ORDER BY ap.data_criacao DESC
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar avaliações do gestor:', error);
-        res.status(500).json({ error: 'Erro ao buscar avaliações' });
-    }
-});
-
-// Buscar avaliação específica com perguntas
-app.get('/api/avaliacoes/:id', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário tem acesso à avaliação
-        const avaliacaoResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    ap.*,
-                    u1.NomeCompleto as colaborador_nome,
-                    u1.Departamento as colaborador_departamento,
-                    u2.NomeCompleto as gestor_nome
-                FROM AvaliacoesPeriodicas ap
-                JOIN Users u1 ON ap.colaborador_id = u1.Id
-                JOIN Users u2 ON ap.criado_por = u2.Id
-                WHERE ap.Id = @avaliacaoId 
-                AND (ap.colaborador_id = @userId OR ap.criado_por = @userId)
-            `);
-        
-        if (avaliacaoResult.recordset.length === 0) {
-            return res.status(404).json({ error: 'Avaliação não encontrada ou acesso negado' });
-        }
-        
-        const avaliacao = avaliacaoResult.recordset[0];
-        
-        // Buscar perguntas da avaliação
-        const perguntasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .query(`
-                SELECT * FROM AvaliacaoPerguntas 
-                WHERE avaliacao_id = @avaliacaoId 
-                ORDER BY ordem
-            `);
-        
-        // Buscar respostas existentes
-        const respostasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .query(`
-                SELECT * FROM AvaliacaoRespostas 
-                WHERE avaliacao_id = @avaliacaoId
-                ORDER BY pergunta_id
-            `);
-        
-        res.json({
-            avaliacao,
-            perguntas: perguntasResult.recordset,
-            respostas: respostasResult.recordset
-        });
-    } catch (error) {
-        console.error('Erro ao buscar avaliação:', error);
-        res.status(500).json({ error: 'Erro ao buscar avaliação' });
-    }
-});
-
-// Submeter autoavaliação do colaborador
-app.post('/api/avaliacoes/:id/autoavaliacao', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { respostas } = req.body;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário é o colaborador da avaliação
-        const avaliacaoResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT status FROM AvaliacoesPeriodicas 
-                WHERE Id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (avaliacaoResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado a esta avaliação' });
-        }
-        
-        if (avaliacaoResult.recordset[0].status === 'Concluida') {
-            return res.status(400).json({ error: 'Esta avaliação já foi concluída' });
-        }
-        
-        // Inserir respostas da autoavaliação
-        for (const resposta of respostas) {
-            await pool.request()
-                .input('avaliacaoId', sql.Int, id)
-                .input('colaboradorId', sql.Int, userId)
-                .input('perguntaId', sql.Int, resposta.pergunta_id)
-                .input('resposta', sql.Text, resposta.resposta)
-                .input('score', sql.Int, resposta.score)
-                .input('tipo', sql.VarChar, 'autoavaliacao')
-                .query(`
-                    INSERT INTO AvaliacaoRespostas (avaliacao_id, colaborador_id, pergunta_id, resposta, score, tipo)
-                    VALUES (@avaliacaoId, @colaboradorId, @perguntaId, @resposta, @score, @tipo)
-                `);
-        }
-        
-        // Atualizar status da avaliação
-        await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .query(`
-                UPDATE AvaliacoesPeriodicas 
-                SET status = 'Autoavaliacao_Concluida', 
-                    data_autoavaliacao = GETDATE()
-                WHERE Id = @avaliacaoId
-            `);
-        
-        res.json({ success: true, message: 'Autoavaliação enviada com sucesso' });
-    } catch (error) {
-        console.error('Erro ao enviar autoavaliação:', error);
-        res.status(500).json({ error: 'Erro ao enviar autoavaliação' });
-    }
-});
-
-// Submeter avaliação do gestor
-app.post('/api/avaliacoes/:id/avaliacao-gestor', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { respostas, observacoes_finais } = req.body;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário é o gestor que criou a avaliação
-        const avaliacaoResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT status FROM AvaliacoesPeriodicas 
-                WHERE Id = @avaliacaoId AND criado_por = @userId
-            `);
-        
-        if (avaliacaoResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado a esta avaliação' });
-        }
-        
-        if (avaliacaoResult.recordset[0].status === 'Concluida') {
-            return res.status(400).json({ error: 'Esta avaliação já foi concluída' });
-        }
-        
-        // Inserir respostas da avaliação do gestor
-        for (const resposta of respostas) {
-            await pool.request()
-                .input('avaliacaoId', sql.Int, id)
-                .input('gestorId', sql.Int, userId)
-                .input('perguntaId', sql.Int, resposta.pergunta_id)
-                .input('resposta', sql.Text, resposta.resposta)
-                .input('score', sql.Int, resposta.score)
-                .input('tipo', sql.VarChar, 'avaliacao_gestor')
-                .query(`
-                    INSERT INTO AvaliacaoRespostas (avaliacao_id, gestor_id, pergunta_id, resposta, score, tipo)
-                    VALUES (@avaliacaoId, @gestorId, @perguntaId, @resposta, @score, @tipo)
-                `);
-        }
-        
-        // Atualizar status da avaliação
-        await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('observacoesFinais', sql.Text, observacoes_finais || '')
-            .query(`
-                UPDATE AvaliacoesPeriodicas 
-                SET status = 'Concluida', 
-                    data_conclusao = GETDATE(),
-                    observacoes_finais = @observacoesFinais
-                WHERE Id = @avaliacaoId
-            `);
-        
-        res.json({ success: true, message: 'Avaliação concluída com sucesso' });
-    } catch (error) {
-        console.error('Erro ao concluir avaliação:', error);
-        res.status(500).json({ error: 'Erro ao concluir avaliação' });
-    }
-});
-
-// Buscar colaboradores para criar avaliação (apenas gestores)
-app.get('/api/avaliacoes/colaboradores-disponiveis', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const currentUser = req.session.user;
-        const pool = await sql.connect(dbConfig);
-        
-        // Buscar colaboradores que o gestor pode avaliar baseado na hierarquia
-        const result = await pool.request()
-            .input('gestorId', sql.Int, currentUser.userId)
-            .query(`
-                SELECT 
-                    u.Id, u.NomeCompleto, u.Departamento, u.Cargo, u.Matricula,
-                    u.HierarchyLevel, u.HierarchyPath
-                FROM Users u
-                WHERE u.IsActive = 1 
-                AND u.HierarchyLevel < ${currentUser.hierarchyLevel}
-                AND u.Id != @gestorId
-                ORDER BY u.NomeCompleto
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar colaboradores:', error);
-        res.status(500).json({ error: 'Erro ao buscar colaboradores' });
     }
 });
 
@@ -3174,9 +4164,7 @@ app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
     }
 });
 
-// ===== SISTEMA DE PESQUISA RÁPIDA =====
-
-// Endpoint para migração - adicionar coluna pergunta
+// ===== REMOÇÃO SISTEMA DE PESQUISA RÁPIDA =====
 app.post('/api/pesquisas/migrate', requireAuth, async (req, res) => {
     try {
         // Verificar se é administrador
@@ -3217,6 +4205,230 @@ app.post('/api/pesquisas/migrate', requireAuth, async (req, res) => {
     }
 });
 
+// Função para verificar se uma coluna existe na tabela PesquisasRapidas
+async function checkColumnExists(columnName) {
+    try {
+        const pool = await sql.connect(dbConfig);
+        const result = await pool.request().query(`
+            SELECT COUNT(*) as column_exists
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_NAME = 'PesquisasRapidas' 
+            AND COLUMN_NAME = '${columnName}'
+        `);
+        return result.recordset[0].column_exists > 0;
+    } catch (error) {
+        console.error(`Erro ao verificar coluna ${columnName}:`, error);
+        return false;
+    }
+}
+
+// Função para atualizar status das pesquisas baseado nas datas
+async function updatePesquisaStatus() {
+    try {
+        const pool = await sql.connect(dbConfig);
+        const now = new Date();
+        
+        // ========================================
+        // NOVO SISTEMA DE PESQUISAS (Tabela Surveys)
+        // ========================================
+        
+        // Primeiro, verificar quantas pesquisas precisam de atualização
+        const statusCheck = await pool.request().query(`
+            SELECT 
+                status,
+                COUNT(*) as total,
+                COUNT(CASE WHEN data_inicio IS NOT NULL AND data_inicio <= GETDATE() AND status = 'Agendada' THEN 1 END) as devem_ativar,
+                COUNT(CASE WHEN data_inicio IS NOT NULL AND data_inicio > GETDATE() AND status = 'Ativa' THEN 1 END) as devem_agendar,
+                COUNT(CASE WHEN data_encerramento IS NOT NULL AND data_encerramento <= GETDATE() AND status = 'Ativa' THEN 1 END) as devem_encerrar
+            FROM Surveys
+            GROUP BY status
+        `);
+        
+        const shouldActivate = statusCheck.recordset.reduce((sum, row) => sum + (row.devem_ativar || 0), 0);
+        const shouldSchedule = statusCheck.recordset.reduce((sum, row) => sum + (row.devem_agendar || 0), 0);
+        const shouldClose = statusCheck.recordset.reduce((sum, row) => sum + (row.devem_encerrar || 0), 0);
+        
+        if (shouldActivate > 0 || shouldSchedule > 0 || shouldClose > 0) {
+            console.log(`   🎯 Ações necessárias: ${shouldActivate} ativar, ${shouldSchedule} agendar, ${shouldClose} encerrar`);
+        }
+        
+        // 1. Ativar pesquisas agendadas que chegaram na data de início
+        const ativarQuery = `
+            UPDATE Surveys 
+            SET status = 'Ativa'
+            WHERE status = 'Agendada' 
+            AND data_inicio IS NOT NULL 
+            AND data_inicio <= GETDATE()
+            AND (data_encerramento IS NULL OR data_encerramento > GETDATE())
+        `;
+        
+        const resultAtivar = await pool.request().query(ativarQuery);
+        if (resultAtivar.rowsAffected && resultAtivar.rowsAffected[0] > 0) {
+            console.log(`✅ ${resultAtivar.rowsAffected[0]} pesquisas foram ATIVADAS automaticamente`);
+            
+            // Mostrar quais pesquisas foram ativadas
+            const ativatedSurveys = await pool.request().query(`
+                SELECT titulo, data_inicio, 
+                       DATEDIFF(minute, data_inicio, GETDATE()) as minutos_atraso
+                FROM Surveys 
+                WHERE status = 'Ativa' 
+                AND data_inicio IS NOT NULL 
+                AND data_inicio <= GETDATE()
+                AND DATEDIFF(minute, data_inicio, GETDATE()) >= 0
+                ORDER BY data_inicio DESC
+            `);
+            ativatedSurveys.recordset.slice(0, 3).forEach(survey => {
+                console.log(`   📋 "${survey.titulo}" (início: ${new Date(survey.data_inicio).toLocaleString('pt-BR')}, atraso: ${survey.minutos_atraso}min)`);
+            });
+        }
+        
+        // 2. Agendar pesquisas que ainda não chegaram na data de início
+        const agendarQuery = `
+            UPDATE Surveys 
+            SET status = 'Agendada'
+            WHERE status = 'Ativa' 
+            AND data_inicio IS NOT NULL 
+            AND data_inicio > GETDATE()
+        `;
+        
+        const resultAgendar = await pool.request().query(agendarQuery);
+        if (resultAgendar.rowsAffected && resultAgendar.rowsAffected[0] > 0) {
+            console.log(`📅 ${resultAgendar.rowsAffected[0]} pesquisas foram AGENDADAS (início futuro)`);
+        }
+        
+        // 3. Encerrar pesquisas que passaram da data de encerramento
+        const encerrarQuery = `
+            UPDATE Surveys 
+            SET status = 'Encerrada'
+            WHERE status = 'Ativa' 
+            AND data_encerramento IS NOT NULL 
+            AND data_encerramento <= GETDATE()
+        `;
+        
+        const resultEncerrar = await pool.request().query(encerrarQuery);
+        if (resultEncerrar.rowsAffected && resultEncerrar.rowsAffected[0] > 0) {
+            console.log(`🔴 ${resultEncerrar.rowsAffected[0]} pesquisas foram ENCERRADAS automaticamente`);
+        }
+        
+        // Log detalhado apenas se houve mudanças ou a cada 60 segundos
+        const shouldLogDetails = resultAtivar.rowsAffected[0] > 0 || 
+                               resultAgendar.rowsAffected[0] > 0 || 
+                               resultEncerrar.rowsAffected[0] > 0 ||
+                               Math.floor(now.getSeconds() / 10) % 6 === 0; // A cada 60s
+        
+        if (shouldLogDetails) {
+            const summaryResult = await pool.request().query(`
+                SELECT 
+                    status,
+                    COUNT(*) as total,
+                    STRING_AGG(titulo, ', ') as titulos
+                FROM Surveys
+                GROUP BY status
+            `);
+            
+            console.log(`   📊 Status atual:`);
+            summaryResult.recordset.forEach(row => {
+                console.log(`      ${row.status}: ${row.total} pesquisa(s)`);
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Erro ao atualizar status das pesquisas:', error);
+    }
+}
+
+// Função para atualizar status dos objetivos baseado nas datas
+async function updateObjetivoStatus() {
+    try {
+        const pool = await sql.connect(dbConfig);
+        const now = new Date();
+        
+        console.log('🎯 Verificando status dos objetivos...');
+        
+        // 1. Ativar objetivos agendados que chegaram na data de início
+        const ativarResult = await pool.request().query(`
+            UPDATE Objetivos 
+            SET status = 'Ativo', updated_at = GETDATE()
+            WHERE status = 'Agendado' 
+            AND data_inicio <= CAST(GETDATE() AS DATE)
+        `);
+        
+        if (ativarResult.rowsAffected && ativarResult.rowsAffected[0] > 0) {
+            console.log(`✅ ${ativarResult.rowsAffected[0]} objetivos foram ATIVADOS automaticamente`);
+            
+            // Mostrar quais objetivos foram ativados
+            const ativadosResult = await pool.request().query(`
+                SELECT titulo, data_inicio, responsavel_id
+                FROM Objetivos 
+                WHERE status = 'Ativo' 
+                AND data_inicio <= CAST(GETDATE() AS DATE)
+                AND DATEDIFF(day, updated_at, GETDATE()) = 0
+                ORDER BY updated_at DESC
+            `);
+            
+            ativadosResult.recordset.slice(0, 3).forEach(objetivo => {
+                console.log(`   🎯 "${objetivo.titulo}" (início: ${new Date(objetivo.data_inicio).toLocaleDateString('pt-BR')})`);
+            });
+        }
+        
+        // 2. Expirar objetivos ativos que passaram da data de fim
+        const expirarResult = await pool.request().query(`
+            UPDATE Objetivos 
+            SET status = 'Expirado', updated_at = GETDATE()
+            WHERE status = 'Ativo' 
+            AND data_fim < CAST(GETDATE() AS DATE)
+        `);
+        
+        if (expirarResult.rowsAffected && expirarResult.rowsAffected[0] > 0) {
+            console.log(`🔴 ${expirarResult.rowsAffected[0]} objetivos foram EXPIRADOS automaticamente`);
+            
+            // Mostrar quais objetivos foram expirados
+            const expiradosResult = await pool.request().query(`
+                SELECT titulo, data_fim, responsavel_id
+                FROM Objetivos 
+                WHERE status = 'Expirado' 
+                AND data_fim < CAST(GETDATE() AS DATE)
+                AND DATEDIFF(day, updated_at, GETDATE()) = 0
+                ORDER BY updated_at DESC
+            `);
+            
+            expiradosResult.recordset.slice(0, 3).forEach(objetivo => {
+                console.log(`   ⏰ "${objetivo.titulo}" (fim: ${new Date(objetivo.data_fim).toLocaleDateString('pt-BR')})`);
+            });
+        }
+        
+        // Log resumo se houve mudanças
+        if ((ativarResult.rowsAffected && ativarResult.rowsAffected[0] > 0) || 
+            (expirarResult.rowsAffected && expirarResult.rowsAffected[0] > 0)) {
+            
+            const summaryResult = await pool.request().query(`
+                SELECT status, COUNT(*) as total
+                FROM Objetivos
+                GROUP BY status
+                ORDER BY status
+            `);
+            
+            console.log('📊 Resumo dos objetivos:');
+            summaryResult.recordset.forEach(row => {
+                console.log(`   ${row.status}: ${row.total} objetivo(s)`);
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Erro ao atualizar status dos objetivos:', error);
+    }
+}
+
+// Função para verificar se a coluna data_inicio existe
+async function checkDataInicioColumnExists() {
+    return await checkColumnExists('data_inicio');
+}
+
+// Função para verificar se a coluna filial_alvo existe
+async function checkFilialAlvoColumnExists() {
+    return await checkColumnExists('filial_alvo');
+}
+
 // Middleware para verificar se é do RH ou T&D
 const requireHRAccess = (req, res, next) => {
     const user = req.session.user;
@@ -3243,6 +4455,33 @@ const requireHRAccess = (req, res, next) => {
     next();
 };
 
+// Endpoint para corrigir uma pesquisa específica (definir data_inicio como agora)
+app.post('/api/pesquisas/:id/fix-date', requireAuth, requireHRAccess, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        // Atualizar a data_inicio para agora (início imediato)
+        const result = await pool.request()
+            .input('pesquisaId', sql.Int, id)
+            .query(`
+                UPDATE PesquisasRapidas 
+                SET data_inicio = GETDATE(),
+                    status = 'Ativa'
+                WHERE Id = @pesquisaId
+            `);
+        
+        if (result.rowsAffected && result.rowsAffected[0] > 0) {
+            res.json({ success: true, message: 'Data de início da pesquisa foi corrigida para agora' });
+        } else {
+            res.status(404).json({ error: 'Pesquisa não encontrada' });
+        }
+    } catch (error) {
+        console.error('Erro ao corrigir data da pesquisa:', error);
+        res.status(500).json({ error: 'Erro ao corrigir data da pesquisa' });
+    }
+});
+
 // Criar pesquisa rápida (apenas RH)
 app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
     try {
@@ -3251,6 +4490,8 @@ app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
             descricao, 
             perguntas,
             departamentos_alvo, 
+            filial_alvo,
+            data_inicio,
             data_encerramento,
             anonima
         } = req.body;
@@ -3261,21 +4502,79 @@ app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
         
         const pool = await sql.connect(dbConfig);
         
-        // Criar a pesquisa principal
-        const result = await pool.request()
-            .input('titulo', sql.VarChar, titulo)
-            .input('descricao', sql.Text, descricao)
-            .input('departamentosAlvo', sql.VarChar, departamentos_alvo === 'Todos' ? null : departamentos_alvo)
-            .input('dataEncerramento', sql.DateTime, data_encerramento ? new Date(data_encerramento) : null)
-            .input('anonima', sql.Bit, anonima || false)
-            .input('criadoPor', sql.Int, req.session.user.userId)
-            .query(`
-                INSERT INTO PesquisasRapidas (titulo, descricao, departamentos_alvo, data_encerramento, anonima, criado_por, status, ativa)
-                OUTPUT INSERTED.Id
-                VALUES (@titulo, @descricao, @departamentosAlvo, @dataEncerramento, @anonima, @criadoPor, 'Ativa', 1)
-            `);
+        // Processar departamentos alvo (CORRIGIDO)
+        // Bug: quando era "Todos", estava salvando NULL, mas filtros esperavam "Todos"
+        let departamentosAlvo = departamentos_alvo;
+        if (!departamentos_alvo || departamentos_alvo.trim() === '') {
+            departamentosAlvo = 'Todos'; // Valor padrão
+        }
+
+        // Verificar se as colunas existem
+        const hasDataInicioColumn = await checkDataInicioColumnExists();
+        const hasFilialAlvoColumn = await checkFilialAlvoColumnExists();
+        
+        // Criar a pesquisa principal com base nas colunas disponíveis
+        let result;
+        let columns = ['titulo', 'descricao', 'departamentos_alvo'];
+        let values = ['@titulo', '@descricao', '@departamentosAlvo'];
+        let inputs = [
+            { name: 'titulo', type: sql.VarChar, value: titulo },
+            { name: 'descricao', type: sql.Text, value: descricao },
+            { name: 'departamentosAlvo', type: sql.VarChar, value: departamentosAlvo }
+        ];
+        
+        // Adicionar filial_alvo se a coluna existir
+        if (hasFilialAlvoColumn) {
+            columns.push('filial_alvo');
+            values.push('@filialAlvo');
+            inputs.push({ name: 'filialAlvo', type: sql.VarChar, value: filial_alvo === 'Todas' ? null : filial_alvo });
+        }
+        
+        // Adicionar data_inicio se a coluna existir
+        if (hasDataInicioColumn) {
+            columns.push('data_inicio');
+            values.push('@dataInicio');
+            // Se não foi informada data_inicio, usar data atual (início imediato)
+            const dataInicioValue = data_inicio ? new Date(data_inicio) : new Date();
+            inputs.push({ name: 'dataInicio', type: sql.DateTime, value: dataInicioValue });
+            console.log('📅 Data de início definida:', dataInicioValue);
+        }
+        
+        // Adicionar data_encerramento (sempre existe)
+        columns.push('data_encerramento');
+        values.push('@dataEncerramento');
+        inputs.push({ name: 'dataEncerramento', type: sql.DateTime, value: data_encerramento ? new Date(data_encerramento) : null });
+        
+        // Adicionar campos obrigatórios
+        columns.push('anonima', 'criado_por', 'status', 'ativa');
+        values.push('@anonima', '@criadoPor', "'Ativa'", '1');
+        inputs.push(
+            { name: 'anonima', type: sql.Bit, value: anonima || false },
+            { name: 'criadoPor', type: sql.Int, value: req.session.user.userId }
+        );
+        
+        // Construir query dinamicamente
+        const query = `
+            INSERT INTO PesquisasRapidas (${columns.join(', ')})
+            OUTPUT INSERTED.Id
+            VALUES (${values.join(', ')})
+        `;
+        
+        console.log('Criando pesquisa com colunas:', columns);
+        
+        // Executar query
+        const request = pool.request();
+        inputs.forEach(input => {
+            request.input(input.name, input.type, input.value);
+        });
+        
+        result = await request.query(query);
         
         const pesquisaId = result.recordset[0].Id;
+        console.log('✅ Pesquisa criada com sucesso! ID:', pesquisaId);
+        console.log('📝 Título:', titulo);
+        console.log('🎯 Departamentos alvo:', departamentosAlvo);
+        console.log('👤 Criado por:', req.session.user.nomeCompleto);
         
         // Inserir as perguntas
         for (let i = 0; i < perguntas.length; i++) {
@@ -3295,7 +4594,17 @@ app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
                 `);
         }
         
-        res.json({ success: true, id: pesquisaId });
+        res.json({ 
+            success: true, 
+            id: pesquisaId,
+            message: 'Pesquisa criada com sucesso',
+            data: {
+                titulo: titulo,
+                departamentos_alvo: departamentosAlvo,
+                filial_alvo: filial_alvo,
+                criado_por: req.session.user.nomeCompleto
+            }
+        });
     } catch (error) {
         console.error('Erro ao criar pesquisa:', error);
         res.status(500).json({ error: 'Erro ao criar pesquisa' });
@@ -3305,6 +4614,9 @@ app.post('/api/pesquisas', requireAuth, requireHRAccess, async (req, res) => {
 // Listar pesquisas (RH vê todas, outros veem apenas as disponíveis para eles)
 app.get('/api/pesquisas', requireAuth, async (req, res) => {
     try {
+        // Atualizar status das pesquisas antes de buscar
+        await updatePesquisaStatus();
+        
         const { search, status, departamento } = req.query;
         const pool = await sql.connect(dbConfig);
         
@@ -3334,15 +4646,101 @@ app.get('/api/pesquisas', requireAuth, async (req, res) => {
         // Verificar se é do RH ou T&D
         const currentUser = req.session.user;
         const isHR = currentUser.departamento && (currentUser.departamento.toUpperCase().includes('RH') || currentUser.departamento.toUpperCase().includes('RECURSOS HUMANOS'));
-        const isTD = currentUser.departamento && currentUser.departamento.toUpperCase().includes('DEPARTAMENTO TREINAM&DESENVOLV');
+        const isTD = currentUser.departamento && (currentUser.departamento.toUpperCase().includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                     currentUser.departamento.toUpperCase().includes('TREINAMENTO') || 
+                     currentUser.departamento.toUpperCase().includes('DESENVOLVIMENTO') ||
+                     currentUser.departamento.toUpperCase().includes('T&D'));
+        const isHRorTD = isHR || isTD;
         
-        // Se não for RH nem T&D, filtrar apenas pesquisas disponíveis para o departamento do usuário
-        if (!isHR && !isTD) {
-            whereClause += ` AND (
-                pr.departamentos_alvo IS NULL 
-                OR pr.departamentos_alvo = 'Todos' 
-                OR pr.departamentos_alvo LIKE '%${currentUser.departamento}%'
+        // Se não for RH nem T&D, filtrar apenas pesquisas disponíveis para o departamento e filial do usuário
+        if (!isHRorTD) {
+            // CORREÇÃO: Buscar o código do departamento do usuário para comparação correta
+            // Agora usa CPF para evitar ambiguidade com matrículas duplicadas
+            let userDeptCode = null;
+            try {
+                const deptCodeResult = await pool.request()
+                    .input('departamento', sql.VarChar, currentUser.departamento)
+                    .input('userCpf', sql.VarChar, currentUser.cpf)  // ✅ Adicionar CPF
+                    .query(`
+                        SELECT TOP 1 
+                            CASE 
+                                WHEN h.NIVEL_4_DEPARTAMENTO IS NOT NULL THEN h.NIVEL_4_DEPARTAMENTO
+                                WHEN h.DEPTO_ATUAL IS NOT NULL THEN h.DEPTO_ATUAL
+                                WHEN ISNUMERIC(s.DEPARTAMENTO) = 1 THEN s.DEPARTAMENTO
+                                ELSE NULL
+                            END as DEPARTAMENTO_CODIGO
+                        FROM TAB_HIST_SRA s
+                        LEFT JOIN HIERARQUIA_CC h ON (
+                            s.DEPARTAMENTO = h.NIVEL_4_DEPARTAMENTO 
+                            OR s.DEPARTAMENTO = h.DEPTO_ATUAL
+                        )
+                        WHERE s.STATUS_GERAL = 'ATIVO'
+                        AND s.CPF = @userCpf  -- ✅ Filtro por CPF para evitar ambiguidade
+                        AND (
+                            h.NIVEL_4_DEPARTAMENTO_DESC = @departamento
+                            OR h.DESCRICAO_ATUAL = @departamento
+                            OR s.DEPARTAMENTO = @departamento
+                        )
+                    `);
+                
+                if (deptCodeResult.recordset.length > 0) {
+                    userDeptCode = deptCodeResult.recordset[0].DEPARTAMENTO_CODIGO;
+                }
+            } catch (error) {
+                console.log('Erro ao buscar código do departamento:', error);
+            }
+            
+            // Construir filtro de departamentos (CORRIGIDO)
+            // Problema: LIKE '%${userDeptCode}%' pode não funcionar corretamente com códigos numéricos
+            // Solução: Usar comparações mais precisas e considerar tanto códigos quanto descrições
+            let deptFilter = '(pr.departamentos_alvo IS NULL OR pr.departamentos_alvo = \'Todos\'';
+            
+            if (userDeptCode) {
+                // Comparação exata com o código do departamento
+                deptFilter += ` OR pr.departamentos_alvo = '${userDeptCode}'`;
+                // Comparação com LIKE para casos onde há múltiplos códigos separados por vírgula
+                deptFilter += ` OR pr.departamentos_alvo LIKE '%${userDeptCode}%'`;
+            }
+            
+            // Também verificar por descrição do departamento para maior compatibilidade
+            if (currentUser.departamento) {
+                deptFilter += ` OR pr.departamentos_alvo LIKE '%${currentUser.departamento}%'`;
+            }
+            
+            deptFilter += ')';
+            
+            whereClause += ` AND ${deptFilter} AND (
+                pr.filial_alvo IS NULL 
+                OR pr.filial_alvo = 'Todas' 
+                OR pr.filial_alvo = '${currentUser.unidade || ''}'
             )`;
+        }
+        
+        // Verificar se as colunas existem
+        const hasDataInicioColumn = await checkDataInicioColumnExists();
+        const hasFilialAlvoColumn = await checkFilialAlvoColumnExists();
+        
+        let finalWhereClause = whereClause;
+        
+        // Aplicar filtros de data apenas para usuários não-RH/T&D
+        if (!isHRorTD) {
+            if (hasDataInicioColumn) {
+                finalWhereClause += ` AND (pr.data_inicio IS NULL OR pr.data_inicio <= GETDATE())`;
+            }
+            finalWhereClause += ` AND (pr.data_encerramento IS NULL OR pr.data_encerramento > GETDATE())`;
+            
+            // Adicionar filtro de filial se a coluna existir
+            if (hasFilialAlvoColumn) {
+                finalWhereClause += ` AND (
+                    pr.filial_alvo IS NULL 
+                    OR pr.filial_alvo = 'Todas' 
+                    OR pr.filial_alvo = '${currentUser.unidade || ''}'
+                )`;
+            }
+        } else {
+            // Para RH/T&D, aplicar apenas filtros de data se especificamente solicitado
+            // mas não filtrar por status ativo/inativo automaticamente
+            console.log('👑 Usuário RH/T&D - mostrando todas as pesquisas sem filtros de data');
         }
         
         const result = await request.query(`
@@ -3353,9 +4751,20 @@ app.get('/api/pesquisas', requireAuth, async (req, res) => {
                 (SELECT TOP 1 pp.tipo FROM PesquisaPerguntas pp WHERE pp.pesquisa_id = pr.Id ORDER BY pp.ordem) as tipo_pergunta
             FROM PesquisasRapidas pr
             JOIN Users u ON pr.criado_por = u.Id
-            ${whereClause}
+            ${finalWhereClause}
             ORDER BY pr.Id DESC
         `);
+        
+        console.log('🔍 Pesquisas encontradas:', result.recordset.length);
+        console.log('👤 Usuário atual:', currentUser.nomeCompleto, '-', currentUser.departamento);
+        console.log('🔐 É RH/T&D:', isHRorTD);
+        console.log('📋 Query executada:', finalWhereClause);
+        console.log('📊 Filtros aplicados:');
+        console.log('  - Search:', search || 'nenhum');
+        console.log('  - Status:', status || 'nenhum');
+        console.log('  - Departamento:', departamento || 'nenhum');
+        console.log('  - Filtros de data:', !isHRorTD ? 'sim' : 'não (RH/T&D)');
+        console.log('  - Filtros de filial:', !isHRorTD ? 'sim' : 'não (RH/T&D)');
         
         res.json(result.recordset);
     } catch (error) {
@@ -3389,19 +4798,88 @@ app.get('/api/pesquisas/filtros', requireAuth, async (req, res) => {
     }
 });
 
-// Buscar departamentos para pesquisas
-app.get('/api/pesquisas/departamentos', requireAuth, async (req, res) => {
+// Buscar filiais para pesquisas
+app.get('/api/pesquisas/filiais', requireAuth, async (req, res) => {
     try {
         const pool = await sql.connect(dbConfig);
         
         const result = await pool.request().query(`
-            SELECT DISTINCT Departamento 
-            FROM Users 
-            WHERE Departamento IS NOT NULL AND Departamento != ''
-            ORDER BY Departamento
+            SELECT DISTINCT FILIAL 
+            FROM TAB_HIST_SRA 
+            WHERE STATUS_GERAL = 'ATIVO' 
+            AND FILIAL IS NOT NULL 
+            AND FILIAL != ''
+            ORDER BY FILIAL
         `);
         
-        const departamentos = ['Todos', ...result.recordset.map(r => r.Departamento)];
+        const filiais = ['Todas', ...result.recordset.map(r => r.FILIAL)];
+        res.json(filiais);
+    } catch (error) {
+        console.error('Erro ao buscar filiais:', error);
+        res.status(500).json({ error: 'Erro ao buscar filiais' });
+    }
+});
+
+// Buscar departamentos para pesquisas (todos ou por filial)
+app.get('/api/pesquisas/departamentos', requireAuth, async (req, res) => {
+    try {
+        const { filial } = req.query;
+        const pool = await sql.connect(dbConfig);
+        
+        let query = `
+            SELECT DISTINCT 
+                CASE 
+                    WHEN h.NIVEL_4_DEPARTAMENTO_DESC IS NOT NULL THEN h.NIVEL_4_DEPARTAMENTO_DESC
+                    WHEN h.DESCRICAO_ATUAL IS NOT NULL THEN h.DESCRICAO_ATUAL
+                    WHEN ISNUMERIC(s.DEPARTAMENTO) = 0 THEN s.DEPARTAMENTO
+                    ELSE NULL
+                END as DEPARTAMENTO_DESC,
+                s.DEPARTAMENTO as DEPARTAMENTO_CODIGO
+            FROM TAB_HIST_SRA s
+            LEFT JOIN HIERARQUIA_CC h ON (
+                s.DEPARTAMENTO = h.NIVEL_4_DEPARTAMENTO 
+                OR s.DEPARTAMENTO = h.DEPTO_ATUAL
+            )
+            WHERE s.STATUS_GERAL = 'ATIVO' 
+            AND s.DEPARTAMENTO IS NOT NULL 
+            AND s.DEPARTAMENTO != ''
+            AND (
+                h.NIVEL_4_DEPARTAMENTO_DESC IS NOT NULL 
+                OR h.DESCRICAO_ATUAL IS NOT NULL
+                OR ISNUMERIC(s.DEPARTAMENTO) = 0
+            )
+            AND (
+                CASE 
+                    WHEN h.NIVEL_4_DEPARTAMENTO_DESC IS NOT NULL THEN h.NIVEL_4_DEPARTAMENTO_DESC
+                    WHEN h.DESCRICAO_ATUAL IS NOT NULL THEN h.DESCRICAO_ATUAL
+                    WHEN ISNUMERIC(s.DEPARTAMENTO) = 0 THEN s.DEPARTAMENTO
+                    ELSE NULL
+                END
+            ) IS NOT NULL
+        `;
+        
+        // Se filial for especificada e não for 'Todas', filtrar por ela
+        if (filial && filial !== 'Todas') {
+            query += ` AND s.FILIAL = @filial`;
+        }
+        
+        query += ` ORDER BY DEPARTAMENTO_DESC`;
+        
+        const request = pool.request();
+        if (filial && filial !== 'Todas') {
+            request.input('filial', sql.VarChar, filial);
+        }
+        
+        const result = await request.query(query);
+        
+        // Retornar objeto com descrição e código para cada departamento
+        const departamentos = [
+            { descricao: 'Todos', codigo: 'Todos' },
+            ...result.recordset.map(r => ({
+                descricao: r.DEPARTAMENTO_DESC,
+                codigo: r.DEPARTAMENTO_CODIGO
+            }))
+        ];
         res.json(departamentos);
     } catch (error) {
         console.error('Erro ao buscar departamentos:', error);
@@ -3697,21 +5175,32 @@ app.get('/api/pesquisas/:id', requireAuth, async (req, res) => {
         
         const pool = await sql.connect(dbConfig);
         
-        // Buscar pesquisa
+        // Verificar se as colunas existem
+        const hasDataInicioColumn = await checkDataInicioColumnExists();
+        
+        // Buscar pesquisa com filtros de data (igual ao endpoint de resposta)
+        let query = `
+            SELECT 
+                pr.*,
+                u.NomeCompleto as criador_nome,
+                (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id) as total_respostas
+            FROM PesquisasRapidas pr
+            JOIN Users u ON pr.criado_por = u.Id
+            WHERE pr.Id = @pesquisaId 
+            AND pr.status = 'Ativa'
+        `;
+        
+        if (hasDataInicioColumn) {
+            query += ` AND (pr.data_inicio IS NULL OR pr.data_inicio <= GETDATE())`;
+        }
+        query += ` AND (pr.data_encerramento IS NULL OR pr.data_encerramento > GETDATE())`;
+        
         const pesquisaResult = await pool.request()
             .input('pesquisaId', sql.Int, parseInt(id))
-            .query(`
-                SELECT 
-                    pr.*,
-                    u.NomeCompleto as criador_nome,
-                    (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id) as total_respostas
-                FROM PesquisasRapidas pr
-                JOIN Users u ON pr.criado_por = u.Id
-                WHERE pr.Id = @pesquisaId
-            `);
+            .query(query);
         
         if (pesquisaResult.recordset.length === 0) {
-            return res.status(404).json({ error: 'Pesquisa não encontrada' });
+            return res.status(404).json({ error: 'Pesquisa não encontrada ou não está ativa no momento' });
         }
         
         const pesquisa = pesquisaResult.recordset[0];
@@ -3768,15 +5257,24 @@ app.post('/api/pesquisas/:id/responder', requireAuth, async (req, res) => {
         
         const pool = await sql.connect(dbConfig);
         
+        // Verificar se a coluna data_inicio existe
+        const hasDataInicioColumn = await checkDataInicioColumnExists();
+        
         // Verificar se pesquisa existe e está ativa
+        let query = `
+            SELECT * FROM PesquisasRapidas 
+            WHERE Id = @pesquisaId 
+            AND status = 'Ativa'
+        `;
+        
+        if (hasDataInicioColumn) {
+            query += ` AND (data_inicio IS NULL OR data_inicio <= GETDATE())`;
+        }
+        query += ` AND (data_encerramento IS NULL OR data_encerramento > GETDATE())`;
+        
         const pesquisaResult = await pool.request()
             .input('pesquisaId', sql.Int, id)
-            .query(`
-                SELECT * FROM PesquisasRapidas 
-                WHERE Id = @pesquisaId 
-                AND status = 'Ativa'
-                AND (data_encerramento IS NULL OR data_encerramento > GETDATE())
-            `);
+            .query(query);
         
         if (pesquisaResult.recordset.length === 0) {
             return res.status(400).json({ error: 'Pesquisa não encontrada ou não está ativa' });
@@ -3823,7 +5321,18 @@ app.post('/api/pesquisas/:id/responder', requireAuth, async (req, res) => {
             `);
         }
         
-        res.json({ success: true, message: 'Respostas registradas com sucesso' });
+        // Adicionar pontos por responder pesquisa (primeira vez no dia)
+        let pointsResult = { success: false, points: 0, message: '' };
+        if (!pesquisa.anonima) {
+            pointsResult = await addPointsToUser(userId, 'pesquisa_respondida', 10, pool);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Respostas registradas com sucesso',
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message
+        });
     } catch (error) {
         console.error('Erro ao responder pesquisa:', error);
         res.status(500).json({ error: 'Erro ao responder pesquisa' });
@@ -4009,33 +5518,146 @@ app.put('/api/pesquisas/:id/encerrar', requireAuth, requireHRAccess, async (req,
 // Buscar pesquisas disponíveis para o usuário
 app.get('/api/pesquisas/disponiveis', requireAuth, async (req, res) => {
     try {
+        // Atualizar status das pesquisas antes de buscar
+        await updatePesquisaStatus();
+        
         const userId = req.session.user.userId;
         const userDepartment = req.session.user.departamento;
         const pool = await sql.connect(dbConfig);
         
-        const result = await pool.request()
-            .input('userId', sql.Int, userId)
-            .input('userDepartment', sql.VarChar, userDepartment)
-            .query(`
-                SELECT 
-                    pr.*,
-                    u.NomeCompleto as criador_nome,
-                    (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id) as total_respostas,
-                    CASE 
-                        WHEN pr.anonima = 1 THEN NULL
-                        ELSE (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id AND user_id = @userId)
-                    END as ja_respondeu
-                FROM PesquisasRapidas pr
-                JOIN Users u ON pr.criado_por = u.Id
-                WHERE pr.status = 'Ativa'
-                AND (pr.data_encerramento IS NULL OR pr.data_encerramento > GETDATE())
-                AND (
-                    pr.departamentos_alvo IS NULL 
-                    OR pr.departamentos_alvo = 'Todos' 
-                    OR pr.departamentos_alvo LIKE '%' + @userDepartment + '%'
-                )
-                ORDER BY pr.Id DESC
-            `);
+        // Verificar se as colunas existem
+        const hasDataInicioColumn = await checkDataInicioColumnExists();
+        const hasFilialAlvoColumn = await checkFilialAlvoColumnExists();
+        
+        let query = `
+            SELECT 
+                pr.*,
+                u.NomeCompleto as criador_nome,
+                (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id) as total_respostas,
+                CASE 
+                    WHEN pr.anonima = 1 THEN NULL
+                    ELSE (SELECT COUNT(*) FROM PesquisaRespostas WHERE pesquisa_id = pr.Id AND user_id = @userId)
+                END as ja_respondeu
+            FROM PesquisasRapidas pr
+            JOIN Users u ON pr.criado_por = u.Id
+            WHERE pr.status = 'Ativa'
+        `;
+        
+        if (hasDataInicioColumn) {
+            query += ` AND (pr.data_inicio IS NULL OR pr.data_inicio <= GETDATE())`;
+        }
+        query += ` AND (pr.data_encerramento IS NULL OR pr.data_encerramento > GETDATE())`;
+        // CORREÇÃO: Buscar o código do departamento do usuário para comparação correta
+        // Agora usa CPF para evitar ambiguidade
+        let userDeptCode = null;
+        try {
+            const deptCodeResult = await pool.request()
+                .input('departamento', sql.VarChar, userDepartment)
+                .input('userCpf', sql.VarChar, req.session.user.cpf)  // ✅ Adicionar CPF
+                .query(`
+                    SELECT TOP 1 
+                        CASE 
+                            WHEN h.NIVEL_4_DEPARTAMENTO IS NOT NULL THEN h.NIVEL_4_DEPARTAMENTO
+                            WHEN h.DEPTO_ATUAL IS NOT NULL THEN h.DEPTO_ATUAL
+                            WHEN ISNUMERIC(s.DEPARTAMENTO) = 1 THEN s.DEPARTAMENTO
+                            ELSE NULL
+                        END as DEPARTAMENTO_CODIGO
+                    FROM TAB_HIST_SRA s
+                    LEFT JOIN HIERARQUIA_CC h ON (
+                        s.DEPARTAMENTO = h.NIVEL_4_DEPARTAMENTO 
+                        OR s.DEPARTAMENTO = h.DEPTO_ATUAL
+                    )
+                    WHERE s.STATUS_GERAL = 'ATIVO'
+                    AND s.CPF = @userCpf  -- ✅ Filtro por CPF para evitar ambiguidade
+                    AND (
+                        h.NIVEL_4_DEPARTAMENTO_DESC = @departamento
+                        OR h.DESCRICAO_ATUAL = @departamento
+                        OR s.DEPARTAMENTO = @departamento
+                    )
+                `);
+            
+            if (deptCodeResult.recordset.length > 0) {
+                userDeptCode = deptCodeResult.recordset[0].DEPARTAMENTO_CODIGO;
+            }
+        } catch (error) {
+            console.log('Erro ao buscar código do departamento:', error);
+        }
+        
+        // Construir filtro de departamentos (CORRIGIDO)
+        // Problema: LIKE '%${userDeptCode}%' pode não funcionar corretamente com códigos numéricos
+        // Solução: Usar comparações mais precisas e considerar tanto códigos quanto descrições
+        let deptFilter = '(pr.departamentos_alvo IS NULL OR pr.departamentos_alvo = \'Todos\'';
+        
+        if (userDeptCode) {
+            // Comparação exata com o código do departamento
+            deptFilter += ` OR pr.departamentos_alvo = '${userDeptCode}'`;
+            // Comparação com LIKE para casos onde há múltiplos códigos separados por vírgula
+            deptFilter += ` OR pr.departamentos_alvo LIKE '%${userDeptCode}%'`;
+        }
+        
+        // Também verificar por descrição do departamento para maior compatibilidade
+        if (userDepartment) {
+            deptFilter += ` OR pr.departamentos_alvo LIKE '%${userDepartment}%'`;
+        }
+        
+        deptFilter += ')';
+        
+        console.log('🏢 Filtro de departamento construído:', deptFilter);
+        console.log('🔍 Código do departamento do usuário:', userDeptCode);
+        console.log('👤 Departamento do usuário (descrição):', userDepartment);
+        
+        query += ` AND ${deptFilter}`;
+        
+        // Adicionar filtro de filial se a coluna existir
+        if (hasFilialAlvoColumn) {
+            const currentUser = req.session.user;
+            const userUnidade = currentUser.unidade || '';
+            console.log('🏢 Filtro de filial - Usuário unidade:', userUnidade);
+            query += ` AND (
+                pr.filial_alvo IS NULL 
+                OR pr.filial_alvo = 'Todas' 
+                OR pr.filial_alvo = '${userUnidade}'
+            )`;
+        }
+        
+        query += ` ORDER BY pr.Id DESC`;
+        
+        // Primeiro, vamos ver todas as pesquisas ativas sem filtros para debug
+        const allPesquisasQuery = `
+            SELECT pr.*, u.NomeCompleto as criador_nome
+            FROM PesquisasRapidas pr
+            JOIN Users u ON pr.criado_por = u.Id
+            WHERE pr.status = 'Ativa'
+        `;
+        
+        const allPesquisasResult = await pool.request().query(allPesquisasQuery);
+        console.log('📋 TODAS as pesquisas ativas:', allPesquisasResult.recordset.length);
+        allPesquisasResult.recordset.forEach(p => {
+            console.log(`  - ID: ${p.Id}, Título: ${p.titulo}, Departamentos: ${p.departamentos_alvo}, Filial: ${p.filial_alvo}`);
+        });
+        
+        console.log('🔍 Query final para pesquisas disponíveis:', query);
+        console.log('👤 Usuário:', req.session.user.nomeCompleto, '- Departamento:', userDepartment, '- Unidade:', req.session.user.unidade);
+        console.log('🏢 Código do departamento encontrado:', userDeptCode);
+        
+        let result;
+        try {
+            console.log('🚀 Executando query final...');
+            result = await pool.request()
+                .input('userId', sql.Int, userId)
+                .query(query);
+            
+            console.log('📊 Pesquisas encontradas após filtros:', result.recordset.length);
+            if (result.recordset.length > 0) {
+                result.recordset.forEach(p => {
+                    console.log(`  ✅ ID: ${p.Id}, Título: ${p.titulo}, Departamentos: ${p.departamentos_alvo}, Filial: ${p.filial_alvo}`);
+                });
+            }
+        } catch (queryError) {
+            console.error('❌ Erro na execução da query:', queryError);
+            console.error('🔍 Query que falhou:', query);
+            throw queryError;
+        }
         
         const pesquisas = result.recordset.map(p => {
             if (p.opcoes) {
@@ -4103,7 +5725,7 @@ app.get('/api/manager/dashboard', requireAuth, async (req, res) => {
         if (userData.HierarchyPath) {
             // Se tem hierarquia definida, buscar usuários que trabalham sob essa hierarquia
             teamQuery = `
-                SELECT u.Id, u.NomeCompleto, u.Departamento, u.Cargo, u.LastLogin
+                SELECT u.Id, u.NomeCompleto, u.Departamento, u.Departamento, u.LastLogin
                 FROM Users u
                 WHERE u.HierarchyPath LIKE @hierarchyPath + '%'
                 AND u.Id != @userId
@@ -4116,7 +5738,7 @@ app.get('/api/manager/dashboard', requireAuth, async (req, res) => {
         } else {
             // Se não tem hierarquia, buscar por departamento
             teamQuery = `
-                SELECT u.Id, u.NomeCompleto, u.Departamento, u.Cargo, u.LastLogin
+                SELECT u.Id, u.NomeCompleto, u.Departamento, u.Departamento, u.LastLogin
                 FROM Users u
                 WHERE u.Departamento = @departamento
                 AND u.Id != @userId
@@ -4210,6 +5832,7 @@ app.get('/api/manager/team-mood', requireAuth, async (req, res) => {
             return res.status(403).json({ error: 'Acesso negado' });
         }
         
+        // CORREÇÃO: Agora usa CHAVE COMPOSTA (MATRÍCULA + CPF)
         let query = `
             SELECT 
                 dm.Score,
@@ -4217,10 +5840,31 @@ app.get('/api/manager/team-mood', requireAuth, async (req, res) => {
                 dm.CreatedAt,
                 u.NomeCompleto,
                 u.Departamento,
-                u.Cargo
+                u.Departamento
             FROM DailyMood dm
             JOIN Users u ON dm.UserId = u.Id
-            WHERE u.ManagerId = @managerId
+            INNER JOIN TAB_HIST_SRA s 
+                ON u.Matricula = s.MATRICULA
+                AND u.CPF = s.CPF  -- ✅ Chave composta
+            INNER JOIN HIERARQUIA_CC h ON (
+                (h.RESPONSAVEL_ATUAL = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                 AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                OR (h.NIVEL_1_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                    AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                OR (h.NIVEL_2_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                    AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                OR (h.NIVEL_3_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                    AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                OR (h.NIVEL_4_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                    AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+            )
+            WHERE u.IsActive = 1
+            AND s.STATUS_GERAL = 'ATIVO'
+            AND (
+                TRIM(s.DEPARTAMENTO) = TRIM(h.DEPTO_ATUAL)
+                OR TRIM(s.DEPARTAMENTO) = TRIM(h.DESCRICAO_ATUAL)
+                OR s.MATRICULA = h.RESPONSAVEL_ATUAL
+            )
         `;
         
         const request = pool.request().input('managerId', sql.Int, userId);
@@ -4250,6 +5894,403 @@ app.get('/api/manager/team-mood', requireAuth, async (req, res) => {
     }
 });
 
+// ===== NOVAS APIs PARA RELATÓRIOS =====
+
+// API para relatórios e análises
+app.get('/api/analytics', requireAuth, async (req, res) => {
+    try {
+        const { period = 30, department = '', type = 'engagement' } = req.query;
+        const userId = req.session.user.userId;
+        const userHierarchy = req.session.user.hierarchyLevel;
+        const userDepartment = req.session.user.departamento;
+        const pool = await sql.connect(dbConfig);
+        
+        // Calcular datas baseado no período
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - parseInt(period));
+        
+        // Filtro de departamento baseado na hierarquia e função
+        let departmentFilter = '';
+        const userRole = req.session.user.role || '';
+        
+        // Detectar RH e T&D baseado no departamento (mais confiável que role)
+        const isRH = userDepartment.toUpperCase().includes('RH') || 
+                     userDepartment.toUpperCase().includes('RECURSOS HUMANOS');
+        const isTD = userDepartment.toUpperCase().includes('T&D') || 
+                     userDepartment.toUpperCase().includes('TREINAMENTO') || 
+                     userDepartment.toUpperCase().includes('DESENVOLVIMENTO') ||
+                     userDepartment.toUpperCase().includes('TREINAM&DESENVOLV');
+        
+        
+        if (department && department !== '') {
+            departmentFilter = `AND u.Departamento = '${department}'`;
+        } else if (!isRH && !isTD) {
+            // Gestores e usuários comuns veem apenas seu departamento (independente do hierarchyLevel)
+            departmentFilter = `AND u.Departamento = '${userDepartment}'`;
+        }
+        // RH e T&D não têm filtro adicional - veem todos os departamentos
+        
+        // Buscar métricas de participação
+        const participationResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    COUNT(DISTINCT u.Id) as totalUsers,
+                    COUNT(DISTINCT CASE WHEN dm.user_id IS NOT NULL THEN u.Id END) as usersWithMood,
+                    COUNT(DISTINCT CASE WHEN f.from_user_id IS NOT NULL THEN u.Id END) as usersWithFeedback,
+                    COUNT(DISTINCT CASE WHEN r.from_user_id IS NOT NULL THEN u.Id END) as usersWithRecognition
+                FROM Users u
+                LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
+                    AND CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN Feedbacks f ON u.Id = f.from_user_id 
+                    AND CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN Recognitions r ON u.Id = r.from_user_id 
+                    AND CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+                WHERE u.IsActive = 1 ${departmentFilter}
+            `);
+        
+        // Buscar métricas de satisfação (eNPS baseado em humor)
+        const satisfactionResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    AVG(CAST(dm.score AS FLOAT)) as averageMood,
+                    COUNT(CASE WHEN dm.score >= 4 THEN 1 END) as promoters,
+                    COUNT(CASE WHEN dm.score <= 2 THEN 1 END) as detractors,
+                    COUNT(dm.score) as totalResponses
+                FROM DailyMood dm
+                JOIN Users u ON dm.user_id = u.Id
+                WHERE CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+                AND u.IsActive = 1 ${departmentFilter}
+            `);
+        
+        // Buscar métricas de tendências
+        const trendsResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    COUNT(f.Id) as totalFeedbacks,
+                    COUNT(r.Id) as totalRecognitions,
+                    COUNT(dm.Id) as totalMoodEntries
+                FROM Users u
+                LEFT JOIN Feedbacks f ON u.Id = f.from_user_id 
+                    AND CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN Recognitions r ON u.Id = r.from_user_id 
+                    AND CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
+                    AND CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+                WHERE u.IsActive = 1 ${departmentFilter}
+            `);
+        
+        // Buscar distribuição por departamento
+        const distributionResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    u.Departamento,
+                    COUNT(DISTINCT u.Id) as totalUsers,
+                    AVG(CAST(dm.score AS FLOAT)) as avgMood,
+                    COUNT(f.Id) as totalFeedbacks,
+                    COUNT(r.Id) as totalRecognitions
+                FROM Users u
+                LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
+                    AND CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN Feedbacks f ON u.Id = f.from_user_id 
+                    AND CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+                LEFT JOIN Recognitions r ON u.Id = r.from_user_id 
+                    AND CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+                WHERE u.IsActive = 1 ${departmentFilter}
+                GROUP BY u.Departamento
+                ORDER BY totalUsers DESC
+            `);
+        
+        const participation = participationResult.recordset[0];
+        const satisfaction = satisfactionResult.recordset[0];
+        const trends = trendsResult.recordset[0];
+        const distribution = distributionResult.recordset;
+        
+        // Calcular eNPS
+        const totalResponses = satisfaction.totalResponses || 0;
+        const promoters = satisfaction.promoters || 0;
+        const detractors = satisfaction.detractors || 0;
+        const eNPS = totalResponses > 0 ? Math.round(((promoters - detractors) / totalResponses) * 100) : 0;
+        
+        res.json({
+            participation: {
+                totalUsers: participation.totalUsers || 0,
+                usersWithMood: participation.usersWithMood || 0,
+                usersWithFeedback: participation.usersWithFeedback || 0,
+                usersWithRecognition: participation.usersWithRecognition || 0,
+                moodParticipationRate: participation.totalUsers > 0 ? 
+                    Math.round((participation.usersWithMood / participation.totalUsers) * 100) : 0,
+                feedbackParticipationRate: participation.totalUsers > 0 ? 
+                    Math.round((participation.usersWithFeedback / participation.totalUsers) * 100) : 0,
+                recognitionParticipationRate: participation.totalUsers > 0 ? 
+                    Math.round((participation.usersWithRecognition / participation.totalUsers) * 100) : 0
+            },
+            satisfaction: {
+                averageMood: Math.round((satisfaction.averageMood || 0) * 10) / 10,
+                eNPS: eNPS,
+                promoters: promoters,
+                detractors: detractors,
+                totalResponses: totalResponses
+            },
+            trends: {
+                totalFeedbacks: trends.totalFeedbacks || 0,
+                totalRecognitions: trends.totalRecognitions || 0,
+                totalMoodEntries: trends.totalMoodEntries || 0
+            },
+            distribution: distribution.map(dept => ({
+                department: dept.Departamento || 'Sem departamento',
+                totalUsers: dept.totalUsers || 0,
+                avgMood: Math.round((dept.avgMood || 0) * 10) / 10,
+                totalFeedbacks: dept.totalFeedbacks || 0,
+                totalRecognitions: dept.totalRecognitions || 0
+            }))
+        });
+    } catch (error) {
+        console.error('Erro ao buscar analytics:', error);
+        res.status(500).json({ error: 'Erro ao buscar analytics' });
+    }
+});
+
+// API para análise temporal (últimos 3 meses, média semanal) - REMOVIDA (duplicada)
+// A implementação correta está na linha 7648 com hierarchyManager
+
+// API simples para lista de departamentos (para pesquisa inteligente)
+app.get('/api/departments', requireAuth, async (req, res) => {
+    try {
+        const userDepartment = req.session.user.departamento;
+        const pool = await sql.connect(dbConfig);
+        
+        let query = `
+            SELECT DISTINCT u.Departamento
+            FROM Users u
+            WHERE u.IsActive = 1 AND u.Departamento IS NOT NULL AND u.Departamento != ''
+        `;
+        
+        // RH e T&D veem todos os departamentos
+        const isRH = userDepartment.toUpperCase().includes('RH') || 
+                     userDepartment.toUpperCase().includes('RECURSOS HUMANOS');
+        const isTD = userDepartment.toUpperCase().includes('T&D') || 
+                     userDepartment.toUpperCase().includes('TREINAMENTO') || 
+                     userDepartment.toUpperCase().includes('DESENVOLVIMENTO') ||
+                     userDepartment.toUpperCase().includes('TREINAM&DESENVOLV');
+        
+        if (!isRH && !isTD) {
+            // Gestores e usuários comuns veem apenas seu departamento
+            query += ` AND u.Departamento = '${userDepartment}'`;
+        }
+        
+        query += ` ORDER BY u.Departamento`;
+        
+        const result = await pool.request().query(query);
+        const departments = result.recordset.map(row => row.Departamento);
+        
+        res.json(departments);
+    } catch (error) {
+        console.error('Erro ao buscar departamentos:', error);
+        res.status(500).json({ error: 'Erro ao buscar departamentos' });
+    }
+});
+
+// API para lista de departamentos
+app.get('/api/analytics/departments-list', requireAuth, async (req, res) => {
+    try {
+        const userId = req.session.user.userId;
+        const userHierarchy = req.session.user.hierarchyLevel;
+        const userDepartment = req.session.user.departamento;
+        const userRole = req.session.user.role || '';
+        const pool = await sql.connect(dbConfig);
+        
+        let query = `
+            SELECT DISTINCT 
+                u.Departamento as codigo,
+                COALESCE(h.DESCRICAO_ATUAL, u.Departamento) as descricao
+            FROM Users u
+            LEFT JOIN HIERARQUIA_CC h ON u.Departamento = h.DEPTO_ATUAL
+            WHERE u.IsActive = 1 AND u.Departamento IS NOT NULL AND u.Departamento != ''
+        `;
+        
+        // RH e T&D veem todos os departamentos
+        // Gestores veem apenas seu departamento
+        // Outros usuários veem apenas seu departamento
+        const isRH = userDepartment.toUpperCase().includes('RH') || 
+                     userDepartment.toUpperCase().includes('RECURSOS HUMANOS');
+        const isTD = userDepartment.toUpperCase().includes('T&D') || 
+                     userDepartment.toUpperCase().includes('TREINAMENTO') || 
+                     userDepartment.toUpperCase().includes('DESENVOLVIMENTO') ||
+                     userDepartment.toUpperCase().includes('TREINAM&DESENVOLV');
+        
+        if (!isRH && !isTD) {
+            // Gestores e usuários comuns veem apenas seu departamento (independente do hierarchyLevel)
+            query += ` AND u.Departamento = '${userDepartment}'`;
+        }
+        // RH e T&D não têm filtro adicional - veem todos os departamentos
+        
+        query += ` ORDER BY descricao`;
+        
+        const result = await pool.request().query(query);
+        const departments = result.recordset.map(row => ({
+            codigo: row.codigo,
+            descricao: row.descricao
+        }));
+        
+        res.json(departments);
+    } catch (error) {
+        console.error('Erro ao buscar departamentos:', error);
+        res.status(500).json({ error: 'Erro ao buscar departamentos' });
+    }
+});
+
+// Função auxiliar para buscar dados de analytics
+async function getAnalyticsData(pool, startDate, endDate, departmentFilter) {
+    // Buscar métricas de participação
+    const participationResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                COUNT(DISTINCT u.Id) as totalUsers,
+                COUNT(DISTINCT CASE WHEN dm.user_id IS NOT NULL THEN u.Id END) as usersWithMood,
+                COUNT(DISTINCT CASE WHEN f.from_user_id IS NOT NULL THEN u.Id END) as usersWithFeedback,
+                COUNT(DISTINCT CASE WHEN r.from_user_id IS NOT NULL THEN u.Id END) as usersWithRecognition
+            FROM Users u
+            LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
+                AND CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+            LEFT JOIN Feedbacks f ON u.Id = f.from_user_id 
+                AND CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+            LEFT JOIN Recognitions r ON u.Id = r.from_user_id 
+                AND CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+            WHERE u.IsActive = 1 ${departmentFilter}
+        `);
+    
+    // Buscar métricas de satisfação
+    const satisfactionResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                AVG(CAST(dm.score AS FLOAT)) as averageMood,
+                COUNT(CASE WHEN dm.score >= 4 THEN 1 END) as promoters,
+                COUNT(CASE WHEN dm.score <= 2 THEN 1 END) as detractors,
+                COUNT(dm.score) as totalResponses
+            FROM DailyMood dm
+            JOIN Users u ON dm.user_id = u.Id
+            WHERE CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+            AND u.IsActive = 1 ${departmentFilter}
+        `);
+    
+    return {
+        participation: participationResult.recordset[0],
+        satisfaction: satisfactionResult.recordset[0]
+    };
+}
+
+// Função auxiliar para buscar dados temporais
+async function getTemporalData(pool, startDate, endDate, departmentFilter) {
+    const moodResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                DATEPART(year, dm.created_at) as year,
+                DATEPART(week, dm.created_at) as week,
+                AVG(CAST(dm.score AS FLOAT)) as averageMood,
+                COUNT(DISTINCT dm.user_id) as participants,
+                MIN(CAST(dm.created_at AS DATE)) as weekStart,
+                MAX(CAST(dm.created_at AS DATE)) as weekEnd
+            FROM DailyMood dm
+            JOIN Users u ON dm.user_id = u.Id
+            WHERE CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+            AND u.IsActive = 1 ${departmentFilter}
+            GROUP BY DATEPART(year, dm.created_at), DATEPART(week, dm.created_at)
+            ORDER BY year, week
+        `);
+    
+    return moodResult.recordset;
+}
+
+// Função auxiliar para buscar dados brutos para exportação
+async function getRawDataForExport(pool, startDate, endDate, departmentFilter) {
+    // Função auxiliar para adaptar o filtro de departamento ao alias usado
+    function adaptDepartmentFilter(filter, alias) {
+        if (!filter || filter.trim() === '') return '';
+        // Substituir 'u.Departamento' pelo alias correto
+        return filter.replace(/u\./g, `${alias}.`);
+    }
+
+    // Buscar dados de humor (usa alias 'u')
+    const moodResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                u.NomeCompleto as usuario,
+                u.Departamento as departamento,
+                dm.score as humor_score,
+                dm.description as humor_descricao,
+                dm.created_at as data_registro
+            FROM DailyMood dm
+            JOIN Users u ON dm.user_id = u.Id
+            WHERE CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+            AND u.IsActive = 1 ${departmentFilter}
+            ORDER BY dm.created_at DESC
+        `);
+    
+    // Buscar dados de feedbacks (usa aliases 'u1' e 'u2', aplicar filtro em 'u1')
+    const feedbackResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                u1.NomeCompleto as remetente,
+                u2.NomeCompleto as destinatario,
+                u1.Departamento as dept_remetente,
+                u2.Departamento as dept_destinatario,
+                f.message as mensagem,
+                f.created_at as data_envio
+            FROM Feedbacks f
+            JOIN Users u1 ON f.from_user_id = u1.Id
+            JOIN Users u2 ON f.to_user_id = u2.Id
+            WHERE CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+            AND u1.IsActive = 1 AND u2.IsActive = 1 ${adaptDepartmentFilter(departmentFilter, 'u1')}
+            ORDER BY f.created_at DESC
+        `);
+    
+    // Buscar dados de reconhecimentos (usa aliases 'u1' e 'u2', aplicar filtro em 'u1')
+    const recognitionResult = await pool.request()
+        .input('startDate', sql.Date, startDate)
+        .input('endDate', sql.Date, endDate)
+        .query(`
+            SELECT 
+                u1.NomeCompleto as remetente,
+                u2.NomeCompleto as destinatario,
+                u1.Departamento as dept_remetente,
+                u2.Departamento as dept_destinatario,
+                r.badge as badge,
+                r.message as mensagem,
+                r.created_at as data_envio
+            FROM Recognitions r
+            JOIN Users u1 ON r.from_user_id = u1.Id
+            JOIN Users u2 ON r.to_user_id = u2.Id
+            WHERE CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+            AND u1.IsActive = 1 AND u2.IsActive = 1 ${adaptDepartmentFilter(departmentFilter, 'u1')}
+            ORDER BY r.created_at DESC
+        `);
+    
+    return {
+        humor: moodResult.recordset,
+        feedbacks: feedbackResult.recordset,
+        recognitions: recognitionResult.recordset
+    };
+}
+
 // Analytics avançados
 app.get('/api/manager/analytics', requireAuth, async (req, res) => {
     try {
@@ -4270,11 +6311,34 @@ app.get('/api/manager/analytics', requireAuth, async (req, res) => {
             return res.status(403).json({ error: 'Acesso negado' });
         }
         
-        // Buscar equipe do gestor
+        // CORREÇÃO: Buscar equipe do gestor com CHAVE COMPOSTA (MATRÍCULA + CPF)
         const teamResult = await pool.request()
             .input('managerId', sql.Int, userId)
             .query(`
-                SELECT Id FROM Users WHERE ManagerId = @managerId AND IsActive = 1
+                SELECT DISTINCT u.Id 
+                FROM Users u
+                INNER JOIN TAB_HIST_SRA s 
+                    ON u.Matricula = s.MATRICULA
+                    AND u.CPF = s.CPF  -- ✅ Chave composta
+                INNER JOIN HIERARQUIA_CC h ON (
+                    (h.RESPONSAVEL_ATUAL = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                     AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_1_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_2_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_3_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                    OR (h.NIVEL_4_MATRICULA_RESP = (SELECT Matricula FROM Users WHERE Id = @managerId)
+                        AND h.CPF_RESPONSAVEL = (SELECT CPF FROM Users WHERE Id = @managerId))
+                )
+                WHERE u.IsActive = 1
+                AND s.STATUS_GERAL = 'ATIVO'
+                AND (
+                    TRIM(s.DEPARTAMENTO) = TRIM(h.DEPTO_ATUAL)
+                    OR TRIM(s.DEPARTAMENTO) = TRIM(h.DESCRICAO_ATUAL)
+                    OR s.MATRICULA = h.RESPONSAVEL_ATUAL
+                )
             `);
         
         const teamIds = teamResult.recordset.map(member => member.Id);
@@ -4371,12 +6435,24 @@ app.get('/api/manager/team-metrics', requireAuth, requireManagerAccess, async (r
     try {
         initializeManagers();
         const currentUser = req.session.user;
+        const { departamento } = req.query;
         const pool = await sql.connect(dbConfig);
         
-        // Usar HierarchyManager para buscar usuários acessíveis
-        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser);
+        // Usar HierarchyManager para buscar usuários acessíveis com filtro de departamento
+        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
+            department: departamento && departamento !== '' ? departamento : null
+        });
         
-        if (accessibleUsers.length === 0) {
+        console.log('📊 Team Metrics - Departamento filtrado:', departamento);
+        console.log('📊 Team Metrics - Usuários acessíveis (subordinados):', accessibleUsers.length);
+        
+        // Incluir o próprio gestor na lista de usuários
+        const currentUserId = currentUser.userId;
+        const allUserIds = [...new Set([currentUserId, ...accessibleUsers.map(user => user.userId)])];
+        
+        console.log('📊 Team Metrics - Total de usuários (incluindo gestor):', allUserIds.length);
+        
+        if (allUserIds.length === 0) {
             return res.json({
                 totalMembers: 0,
                 activeMembers: 0,
@@ -4385,11 +6461,13 @@ app.get('/api/manager/team-metrics', requireAuth, requireManagerAccess, async (r
             });
         }
         
-        const userIds = accessibleUsers.map(user => user.userId);
-        const userIdsParam = userIds.join(',');
+        // Buscar métricas da equipe (incluindo o gestor)
+        const request = pool.request();
+        allUserIds.forEach((userId, index) => {
+            request.input(`userId${index}`, sql.Int, userId);
+        });
         
-        // Buscar métricas da equipe
-        const metricsResult = await pool.request().query(`
+        const metricsResult = await request.query(`
             SELECT 
                 COUNT(DISTINCT u.Id) as totalMembers,
                 COUNT(DISTINCT CASE WHEN u.IsActive = 1 THEN u.Id END) as activeMembers,
@@ -4400,7 +6478,7 @@ app.get('/api/manager/team-metrics', requireAuth, requireManagerAccess, async (r
                 AND CAST(dm.created_at AS DATE) = CAST(GETDATE() AS DATE)
             LEFT JOIN Feedbacks f ON u.Id = f.to_user_id
                 AND CAST(f.created_at AS DATE) >= CAST(DATEADD(day, -30, GETDATE()) AS DATE)
-            WHERE u.Id IN (${userIdsParam})
+            WHERE u.Id IN (${allUserIds.map((_, i) => `@userId${i}`).join(',')})
         `);
         
         const metrics = metricsResult.recordset[0];
@@ -4421,12 +6499,24 @@ app.get('/api/manager/team-status', requireAuth, requireManagerAccess, async (re
     try {
         initializeManagers();
         const currentUser = req.session.user;
+        const { departamento } = req.query;
         const pool = await sql.connect(dbConfig);
         
-        // Usar HierarchyManager para buscar usuários acessíveis
-        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser);
+        // Usar HierarchyManager para buscar usuários acessíveis com filtro de departamento
+        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
+            department: departamento && departamento !== '' ? departamento : null
+        });
         
-        if (accessibleUsers.length === 0) {
+        console.log('👥 Team Status - Departamento filtrado:', departamento);
+        console.log('👥 Team Status - Usuários acessíveis (subordinados):', accessibleUsers.length);
+        
+        // Incluir o próprio gestor na lista de usuários
+        const currentUserId = currentUser.userId;
+        const allUserIds = [...new Set([currentUserId, ...accessibleUsers.map(user => user.userId)])];
+        
+        console.log('👥 Team Status - Total de usuários (incluindo gestor):', allUserIds.length);
+        
+        if (allUserIds.length === 0) {
             return res.json({
                 online: 0,
                 offline: 0,
@@ -4435,18 +6525,20 @@ app.get('/api/manager/team-status', requireAuth, requireManagerAccess, async (re
             });
         }
         
-        const userIds = accessibleUsers.map(user => user.userId);
-        const userIdsParam = userIds.join(',');
+        // Buscar status da equipe (incluindo o gestor)
+        const request = pool.request();
+        allUserIds.forEach((userId, index) => {
+            request.input(`userId${index}`, sql.Int, userId);
+        });
         
-        // Buscar status da equipe
-        const statusResult = await pool.request().query(`
+        const statusResult = await request.query(`
             SELECT 
                 COUNT(DISTINCT CASE WHEN u.IsActive = 1 THEN u.Id END) as active,
                 COUNT(DISTINCT CASE WHEN u.IsActive = 0 THEN u.Id END) as inactive,
                 COUNT(DISTINCT CASE WHEN u.LastLogin >= DATEADD(minute, -30, GETDATE()) THEN u.Id END) as online,
                 COUNT(DISTINCT CASE WHEN u.LastLogin < DATEADD(minute, -30, GETDATE()) OR u.LastLogin IS NULL THEN u.Id END) as offline
             FROM Users u
-            WHERE u.Id IN (${userIdsParam})
+            WHERE u.Id IN (${allUserIds.map((_, i) => `@userId${i}`).join(',')})
         `);
         
         const status = statusResult.recordset[0];
@@ -4478,30 +6570,90 @@ app.get('/api/manager/team-management', requireAuth, async (req, res) => {
             department: departamento && departamento !== 'Todos' ? departamento : null
         });
         
-        console.log('Accessible users:', accessibleUsers);
+        console.log('Accessible users (subordinados):', accessibleUsers.length);
         
-        if (accessibleUsers.length === 0) {
+        // Incluir o próprio gestor na lista de usuários
+        const currentUserId = currentUser.userId;
+        const allUserIds = [...new Set([currentUserId, ...accessibleUsers.map(user => user.userId)])];
+        
+        console.log('Total de usuários (incluindo gestor):', allUserIds.length);
+        
+        if (allUserIds.length === 0) {
             console.log('Nenhum usuário acessível encontrado');
             return res.json([]);
         }
         
-        // Buscar dados detalhados dos usuários acessíveis
+        // Buscar dados detalhados dos usuários acessíveis (incluindo o gestor)
         const pool = await sql.connect(dbConfig);
-        const userIds = accessibleUsers.map(user => user.userId);
+        const userIds = allUserIds;
         
-        // Query simplificada para debug
+        // Query com estatísticas reais incluindo objetivos
         let query = `
             SELECT 
                 u.Id,
                 u.NomeCompleto,
                 u.Departamento,
-                u.Cargo,
+                u.DescricaoDepartamento,
                 u.LastLogin,
                 u.IsActive,
-                0 as lastMood,
-                0 as recentFeedbacks,
+                COALESCE(dm.avg_score, 0) as lastMood,
+                COALESCE(fb.total_feedbacks, 0) as recentFeedbacks,
+                COALESCE(obj.objective_stats, '0,0,0,0,0') as objectiveStats,
                 0 as pendingEvaluations
             FROM Users u
+            LEFT JOIN (
+                SELECT 
+                    dm.user_id,
+                    AVG(CAST(dm.score AS FLOAT)) as avg_score
+                FROM DailyMood dm
+                GROUP BY dm.user_id
+            ) dm ON u.Id = dm.user_id
+            LEFT JOIN (
+                SELECT 
+                    user_id,
+                    SUM(feedback_count) as total_feedbacks
+                FROM (
+                    SELECT 
+                        f.to_user_id as user_id,
+                        COUNT(*) as feedback_count
+                    FROM Feedbacks f
+                    GROUP BY f.to_user_id
+                    UNION ALL
+                    SELECT 
+                        f.from_user_id as user_id,
+                        COUNT(*) as feedback_count
+                    FROM Feedbacks f
+                    GROUP BY f.from_user_id
+                ) combined
+                GROUP BY user_id
+            ) fb ON u.Id = fb.user_id
+            LEFT JOIN (
+                SELECT 
+                    user_id,
+                    (
+                        CAST(SUM(CASE WHEN status = 'Ativo' THEN 1 ELSE 0 END) AS VARCHAR) + ',' +
+                        CAST(SUM(CASE WHEN status = 'Agendado' THEN 1 ELSE 0 END) AS VARCHAR) + ',' +
+                        CAST(SUM(CASE WHEN status = 'Concluído' THEN 1 ELSE 0 END) AS VARCHAR) + ',' +
+                        CAST(SUM(CASE WHEN status = 'Expirado' THEN 1 ELSE 0 END) AS VARCHAR) + ',' +
+                        CAST(COUNT(DISTINCT objetivo_id) AS VARCHAR)
+                    ) as objective_stats
+                FROM (
+                    SELECT DISTINCT 
+                        o.Id as objetivo_id,
+                        o.responsavel_id as user_id,
+                        o.status
+                    FROM Objetivos o
+                    WHERE o.responsavel_id IS NOT NULL
+                    UNION
+                    SELECT DISTINCT
+                        o.Id as objetivo_id,
+                        orr.responsavel_id as user_id,
+                        o.status
+                    FROM Objetivos o
+                    INNER JOIN ObjetivoResponsaveis orr ON o.Id = orr.objetivo_id
+                ) userobjectives
+                GROUP BY user_id
+            ) obj ON u.Id = obj.user_id
             WHERE u.Id IN (${userIds.map((_, i) => `@userId${i}`).join(',')})
         `;
         
@@ -4522,16 +6674,125 @@ app.get('/api/manager/team-management', requireAuth, async (req, res) => {
         });
         
         const result = await request.query(query);
-        const teamMembers = result.recordset.map(member => ({
+        const teamMembers = result.recordset.map(member => {
+            // Parse das estatísticas de objetivos
+            const objectiveStats = member.objectiveStats;
+            let statistics = {
+                active: 0,
+                scheduled: 0,
+                completed: 0,
+                expired: 0,
+                total: 0,
+                activeObjectives: 0
+            };
+            
+            if (objectiveStats && objectiveStats !== '0,0,0,0,0') {
+                const statsArray = objectiveStats.split(',');
+                if (statsArray.length === 5) {
+                    statistics = {
+                        active: parseInt(statsArray[0]) || 0,
+                        scheduled: parseInt(statsArray[1]) || 0,
+                        completed: parseInt(statsArray[2]) || 0,
+                        expired: parseInt(statsArray[3]) || 0,
+                        total: parseInt(statsArray[4]) || 0,
+                        activeObjectives: parseInt(statsArray[0]) || 0 // Ativo = activeObjectives
+                    };
+                }
+            }
+            
+            return {
             ...member,
-            activeObjectives: 0, // Por enquanto, não temos tabela Goals
-            LastLogin: member.LastLogin ? member.LastLogin.toISOString() : null
-        }));
+                LastLogin: member.LastLogin ? member.LastLogin.toISOString() : null,
+                activeObjectives: statistics.activeObjectives,
+                objectiveStatistics: statistics
+            };
+        });
         
         res.json(teamMembers);
     } catch (error) {
         console.error('Erro ao buscar gestão de equipe:', error);
         res.status(500).json({ error: 'Erro ao buscar gestão de equipe' });
+    }
+});
+
+// =============================================
+// ROTAS PARA GESTÃO DE FEEDBACKS DE COLABORADORES
+// =============================================
+
+// Buscar informações de um colaborador específico
+app.get('/api/manager/employee-info/:employeeId', requireAuth, requireManagerAccess, async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        const result = await pool.request()
+            .input('employeeId', sql.Int, employeeId)
+            .query(`
+                SELECT Id, NomeCompleto, Departamento, LastLogin, IsActive
+                FROM Users 
+                WHERE Id = @employeeId
+            `);
+        
+        if (result.recordset.length === 0) {
+            return res.status(404).json({ error: 'Colaborador não encontrado' });
+        }
+        
+        const employee = result.recordset[0];
+        employee.LastLogin = employee.LastLogin ? employee.LastLogin.toISOString() : null;
+        
+        res.json(employee);
+    } catch (error) {
+        console.error('Erro ao buscar dados do colaborador:', error);
+        res.status(500).json({ error: 'Erro ao buscar dados do colaborador' });
+    }
+});
+
+// Buscar feedbacks de um colaborador específico (enviados e recebidos)
+app.get('/api/manager/employee-feedbacks/:employeeId', requireAuth, requireManagerAccess, async (req, res) => {
+    try {
+        const { employeeId } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        // Feedbacks recebidos pelo colaborador
+        const receivedResult = await pool.request()
+            .input('employeeId', sql.Int, employeeId)
+            .query(`
+                SELECT f.*, 
+                       u1.NomeCompleto as from_name,
+                       u2.NomeCompleto as to_name,
+                       'received' as direction,
+                       (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count
+                FROM Feedbacks f
+                JOIN Users u1 ON f.from_user_id = u1.Id
+                JOIN Users u2 ON f.to_user_id = u2.Id
+                WHERE f.to_user_id = @employeeId
+            `);
+        
+        // Feedbacks enviados pelo colaborador
+        const sentResult = await pool.request()
+            .input('employeeId', sql.Int, employeeId)
+            .query(`
+                SELECT f.*, 
+                       u1.NomeCompleto as from_name,
+                       u2.NomeCompleto as to_name,
+                       'sent' as direction,
+                       (SELECT COUNT(*) FROM FeedbackReplies fr WHERE fr.feedback_id = f.Id) as replies_count
+                FROM Feedbacks f
+                JOIN Users u1 ON f.from_user_id = u1.Id
+                JOIN Users u2 ON f.to_user_id = u2.Id
+                WHERE f.from_user_id = @employeeId
+            `);
+        
+        // Combinar e ordenar por data
+        const allFeedbacks = [
+            ...receivedResult.recordset,
+            ...sentResult.recordset
+        ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        res.json(allFeedbacks);
+    } catch (error) {
+        console.error('Erro ao buscar feedbacks do colaborador:', error);
+        res.status(500).json({ error: 'Erro ao buscar feedbacks do colaborador' });
     }
 });
 
@@ -4585,12 +6846,20 @@ app.get('/api/analytics/rankings', requireAuth, async (req, res) => {
         const { period = 30, department, topUsers = 50 } = req.query;
         const currentUser = req.session.user;
         
+        // Verificar se é RH ou T&D
+        const departamento = currentUser.departamento ? currentUser.departamento.toUpperCase() : '';
+        const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+        const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                     departamento.includes('TREINAMENTO') || 
+                     departamento.includes('DESENVOLVIMENTO') ||
+                     departamento.includes('T&D');
+        
         // Para usuários comuns, limitar a visualização
-        const isManager = currentUser.hierarchyLevel >= 3 || currentUser.role === 'Administrador';
+        const isManager = currentUser.hierarchyLevel >= 3 || currentUser.role === 'Administrador' || isHR || isTD;
         
         let accessibleUsers = [];
         if (isManager) {
-            // Gestores podem ver todos os usuários
+            // Gestores, RH e T&D podem ver todos os usuários
             accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
                 department: department && department !== 'Todos' ? department : null
             });
@@ -4651,40 +6920,6 @@ app.get('/api/analytics/gamification-leaderboard', requireAuth, async (req, res)
     } catch (error) {
         console.error('Erro ao buscar leaderboard de gamificação:', error);
         res.status(500).json({ error: 'Erro ao buscar leaderboard de gamificação' });
-    }
-});
-
-// Listar departamentos para filtros
-app.get('/api/analytics/departments-list', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        initializeManagers();
-        const currentUser = req.session.user;
-        const pool = await sql.connect(dbConfig);
-        
-        // Buscar departamentos dos usuários acessíveis
-        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser);
-        
-        if (accessibleUsers.length === 0) {
-            return res.json([]);
-        }
-        
-        const userIds = accessibleUsers.map(user => user.userId);
-        const userIdsParam = userIds.join(',');
-        
-        const result = await pool.request().query(`
-            SELECT DISTINCT u.Departamento
-            FROM Users u
-            WHERE u.Id IN (${userIdsParam}) 
-                AND u.Departamento IS NOT NULL 
-                AND u.Departamento != ''
-            ORDER BY u.Departamento
-        `);
-        
-        const departments = result.recordset.map(row => row.Departamento);
-        res.json(departments);
-    } catch (error) {
-        console.error('Erro ao buscar departamentos:', error);
-        res.status(500).json({ error: 'Erro ao buscar departamentos' });
     }
 });
 
@@ -4772,6 +7007,15 @@ app.get('/api/analytics/trends', requireAuth, requireManagerAccess, async (req, 
     }
 });
 
+// Função auxiliar para obter número da semana
+function getWeekNumber(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+}
+
 // Análise temporal
 app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req, res) => {
     try {
@@ -4780,6 +7024,24 @@ app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req
         const currentUser = req.session.user;
         const pool = await sql.connect(dbConfig);
         
+        // Verificar se a tabela DailyMood existe
+        const tableCheck = await pool.request().query(`
+            SELECT COUNT(*) as tableExists 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'DailyMood'
+        `);
+        
+        if (tableCheck.recordset[0].tableExists === 0) {
+            console.log('⚠️ Tabela DailyMood não existe - retornando dados vazios');
+            return res.json({
+                moodData: [],
+                dailyMood: [],
+                feedbacks: [],
+                recognitions: [],
+                message: 'Sistema de humor ainda não configurado'
+            });
+        }
+        
         // Usar HierarchyManager para buscar usuários acessíveis
         const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
             department: department && department !== 'Todos' ? department : null
@@ -4787,6 +7049,7 @@ app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req
         
         if (accessibleUsers.length === 0) {
             return res.json({
+                moodData: [],
                 dailyMood: [],
                 feedbacks: [],
                 recognitions: [],
@@ -4796,6 +7059,9 @@ app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req
         
         const userIds = accessibleUsers.map(user => user.userId);
         const userIdsParam = userIds.join(',');
+        
+        console.log('🔍 Análise temporal - Usuários incluídos:', userIds.length);
+        console.log('🔍 Análise temporal - Departamento filtrado:', department);
         
         // Buscar dados de humor diário
         const moodResult = await pool.request()
@@ -4811,6 +7077,11 @@ app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req
                 GROUP BY CAST(dm.created_at AS DATE)
                 ORDER BY date DESC
             `);
+        
+        console.log('🔍 Análise temporal - Dados de humor encontrados:', moodResult.recordset.length, 'dias');
+        if (moodResult.recordset.length === 0) {
+            console.log('⚠️ Nenhum dado de humor encontrado para o período e usuários selecionados');
+        }
         
         // Buscar dados de feedbacks
         const feedbacksResult = await pool.request()
@@ -4852,6 +7123,14 @@ app.get('/api/analytics/temporal', requireAuth, requireManagerAccess, async (req
             `);
         
         res.json({
+            moodData: moodResult.recordset.map(row => ({
+                year: new Date(row.date).getFullYear(),
+                week: getWeekNumber(row.date),
+                averageMood: Math.round(row.average * 10) / 10,
+                participants: row.count,
+                weekStart: row.date.toISOString().split('T')[0],
+                weekEnd: row.date.toISOString().split('T')[0]
+            })),
             dailyMood: moodResult.recordset.map(row => ({
                 date: row.date.toISOString().split('T')[0],
                 average: Math.round(row.average * 10) / 10,
@@ -5061,7 +7340,17 @@ app.get('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
         // Garantir que as tabelas existam
         await ensureChatTablesExist(pool);
         
-
+        // Marcar feedback como visualizado quando o chat é aberto
+        await pool.request()
+            .input('feedbackId', sql.Int, feedbackId)
+            .input('userId', sql.Int, userId)
+            .query(`
+                IF NOT EXISTS (SELECT 1 FROM FeedbackReactions WHERE feedback_id = @feedbackId AND user_id = @userId AND reaction_type = 'viewed')
+                BEGIN
+                    INSERT INTO FeedbackReactions (feedback_id, user_id, reaction_type, created_at)
+                    VALUES (@feedbackId, @userId, 'viewed', GETDATE())
+                END
+            `);
         
         const result = await pool.request()
             .input('feedbackId', sql.Int, feedbackId)
@@ -5090,89 +7379,7 @@ app.get('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
     }
 });
 
-// Enviar mensagem no chat
-app.post('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const feedbackId = parseInt(id);
-        
-        if (!feedbackId || isNaN(feedbackId) || feedbackId <= 0) {
-            return res.status(400).json({ error: 'ID do feedback inválido' });
-        }
-        
-        const { message, reply_to } = req.body;
-        const userId = req.session.user.userId;
-        
-        console.log('📨 Dados recebidos:', { message, reply_to, userId });
-        
-        if (!message || message.trim() === '') {
-            return res.status(400).json({ error: 'Mensagem é obrigatória' });
-        }
-        
-        const pool = await sql.connect(dbConfig);
-        
-        // Garantir que as tabelas existam
-        await ensureChatTablesExist(pool);
-        
-        // Buscar dados da mensagem referenciada se houver
-        let replyToData = null;
-        if (reply_to) {
-            const replyResult = await pool.request()
-                .input('replyId', sql.Int, reply_to)
-                .query(`
-                    SELECT fr.reply_text, u.NomeCompleto
-                    FROM FeedbackReplies fr
-                    LEFT JOIN Users u ON fr.user_id = u.Id
-                    WHERE fr.Id = @replyId
-                `);
-            
-            if (replyResult.recordset.length > 0) {
-                replyToData = replyResult.recordset[0];
-            }
-        }
-        
-        const result = await pool.request()
-            .input('feedbackId', sql.Int, feedbackId)
-            .input('userId', sql.Int, userId)
-            .input('message', sql.NVarChar(sql.MAX), message.trim())
-            .input('replyToId', sql.Int, reply_to || null)
-            .input('replyToMessage', sql.NVarChar(sql.MAX), replyToData ? replyToData.reply_text : null)
-            .input('replyToUser', sql.NVarChar(255), replyToData ? replyToData.NomeCompleto : null)
-            .query(`
-                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text, reply_to_id, reply_to_message, reply_to_user)
-                OUTPUT INSERTED.Id, INSERTED.created_at
-                VALUES (@feedbackId, @userId, @message, @replyToId, @replyToMessage, @replyToUser)
-            `);
-        
-        const newMessage = result.recordset[0];
-        
-        // Buscar dados completos da nova mensagem
-        const fullMessageResult = await pool.request()
-            .input('messageId', sql.Int, newMessage.Id)
-            .query(`
-                SELECT 
-                    fr.Id,
-                    fr.feedback_id,
-                    fr.user_id,
-                    fr.reply_text as message,
-                    fr.created_at,
-                    fr.reply_to_id,
-                    fr.reply_to_message,
-                    fr.reply_to_user,
-                    COALESCE(u.NomeCompleto, 'Usuário') as user_name,
-                    u.nome as user_first_name
-                FROM FeedbackReplies fr
-                LEFT JOIN Users u ON fr.user_id = u.Id
-                WHERE fr.Id = @messageId
-            `);
-        
-        res.json({ success: true, message: fullMessageResult.recordset[0] });
-    } catch (error) {
-        console.error('Erro ao enviar mensagem:', error);
-        res.status(500).json({ error: 'Erro ao enviar mensagem' });
-    }
-    
-});
+// Endpoint duplicado removido - usando apenas o endpoint com pontuação abaixo
 
 // Reagir com emoji a uma mensagem
 app.post('/api/feedbacks/:feedbackId/messages/:messageId/reactions', requireAuth, async (req, res) => {
@@ -5270,12 +7477,6 @@ app.post('/api/feedbacks/:id/reply', requireAuth, async (req, res) => {
     // Redirecionar para a nova rota de mensagens
     req.url = `/api/feedbacks/${req.params.id}/messages`;
     return app._router.handle(req, res);
-});
-
-// Start the server
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}`);
-    console.log(`📱 Acesse: http://localhost:${PORT}`);
 });
 
 app.get('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
@@ -5376,15 +7577,38 @@ app.post('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
             return res.status(403).json({ error: 'Acesso negado a este feedback' });
         }
         
+        // Buscar informações da mensagem original se reply_to foi fornecido
+        let replyToMessage = null;
+        let replyToUser = null;
+        
+        if (reply_to) {
+            const replyInfo = await pool.request()
+                .input('replyId', sql.Int, reply_to)
+                .query(`
+                    SELECT fr.reply_text, u.NomeCompleto as user_name
+                    FROM FeedbackReplies fr
+                    LEFT JOIN Users u ON fr.user_id = u.Id
+                    WHERE fr.Id = @replyId
+                `);
+            
+            if (replyInfo.recordset.length > 0) {
+                replyToMessage = replyInfo.recordset[0].reply_text;
+                replyToUser = replyInfo.recordset[0].user_name;
+            }
+        }
+
         // Inserir nova mensagem
         const result = await pool.request()
             .input('feedbackId', sql.Int, id)
             .input('userId', sql.Int, userId)
             .input('message', sql.NVarChar(sql.MAX), message.trim())
+            .input('replyToId', sql.Int, reply_to || null)
+            .input('replyToMessage', sql.NVarChar(sql.MAX), replyToMessage)
+            .input('replyToUser', sql.NVarChar(255), replyToUser)
             .query(`
-                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text, created_at)
+                INSERT INTO FeedbackReplies (feedback_id, user_id, reply_text, reply_to_id, reply_to_message, reply_to_user, created_at)
                 OUTPUT INSERTED.Id, INSERTED.created_at
-                VALUES (@feedbackId, @userId, @message, GETDATE())
+                VALUES (@feedbackId, @userId, @message, @replyToId, @replyToMessage, @replyToUser, GETDATE())
             `);
         
         const newMessage = result.recordset[0];
@@ -5408,7 +7632,43 @@ app.post('/api/feedbacks/:id/messages', requireAuth, async (req, res) => {
         const fullMessage = messageResult.recordset[0];
         fullMessage.reactions = [];
         
-        res.json({ success: true, message: fullMessage });
+        // Verificar se o usuário é o destinatário do feedback para dar pontos
+        // Só deve ganhar pontos se for o destinatário (to_user_id), não o remetente (from_user_id)
+        const feedbackCheck = await pool.request()
+            .input('feedbackId', sql.Int, id)
+            .query(`
+                SELECT from_user_id, to_user_id 
+                FROM Feedbacks 
+                WHERE Id = @feedbackId
+            `);
+        
+        let pointsResult = { success: false, points: 0, message: '' };
+        
+        if (feedbackCheck.recordset.length > 0) {
+            const feedback = feedbackCheck.recordset[0];
+            const isRecipient = feedback.to_user_id === userId;
+            
+            if (isRecipient) {
+                // Usuário é o destinatário - pode ganhar pontos por responder
+                pointsResult = await addPointsToUser(userId, 'feedback_respondido', 10, pool);
+                console.log('✅ Usuário é destinatário do feedback - pontos concedidos');
+            } else {
+                // Usuário é o remetente - não deve ganhar pontos
+                pointsResult = { 
+                    success: false, 
+                    points: 0, 
+                    message: 'Você não ganha pontos respondendo seu próprio feedback' 
+                };
+                console.log('ℹ️ Usuário é remetente do feedback - pontos não concedidos');
+            }
+        }
+        
+        res.json({ 
+            success: true, 
+            message: fullMessage,
+            pointsEarned: pointsResult.success ? pointsResult.points : 0,
+            pointsMessage: pointsResult.message
+        });
     } catch (error) {
         console.error('Erro ao enviar mensagem:', error);
         res.status(500).json({ error: 'Erro ao enviar mensagem' });
@@ -5544,7 +7804,422 @@ app.get('/api/analytics/cache-stats', requireAuth, requireManagerAccess, async (
     }
 });
 
-// Analytics e relatórios
+// Nova API abrangente para relatórios
+app.get('/api/analytics/comprehensive', requireAuth, requireManagerAccess, async (req, res) => {
+    try {
+        initializeManagers();
+        const currentUser = req.session.user;
+        const { period = 30, department } = req.query;
+        const pool = await sql.connect(dbConfig);
+        
+        // Usar HierarchyManager para buscar usuários acessíveis
+        const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
+            department: department && department !== 'Todos' ? department : null
+        });
+        
+        if (accessibleUsers.length === 0) {
+            return res.json({
+                engagement: { participationRate: 0, activeUsers: 0, totalUsers: 0, moodEntries: 0, feedbackCount: 0 },
+                mood: { averageMood: 0, totalEntries: 0, positiveMood: 0, negativeMood: 0 },
+                feedback: { totalFeedbacks: 0, totalRecognitions: 0, positiveFeedbacks: 0, constructiveFeedbacks: 0, suggestionFeedbacks: 0, otherFeedbacks: 0 },
+                gamification: { totalPoints: 0, activeUsers: 0, topUser: null, badgesEarned: 0 },
+                objectives: { totalObjectives: 0, completedObjectives: 0, inProgressObjectives: 0 },
+                performance: { averageScore: 0, totalEvaluations: 0, highPerformers: 0, improvementNeeded: 0 },
+                topUsers: []
+            });
+        }
+        
+        const userIds = accessibleUsers.map(user => user.userId);
+        const userIdsParam = userIds.join(',');
+        
+        // Calcular datas baseado no período
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - parseInt(period));
+        
+        // Buscar todos os dados em paralelo
+        const [
+            engagementData,
+            moodData,
+            feedbackData,
+            gamificationData,
+            objectivesData,
+            performanceData,
+            topUsersData
+        ] = await Promise.all([
+            getEngagementData(pool, userIdsParam, startDate, endDate),
+            getMoodData(pool, userIdsParam, startDate, endDate),
+            getFeedbackData(pool, userIdsParam, startDate, endDate),
+            getGamificationData(pool, userIdsParam, startDate, endDate),
+            getObjectivesData(pool, userIdsParam, startDate, endDate),
+            getPerformanceData(pool, userIdsParam, startDate, endDate),
+            getTopUsersData(pool, userIdsParam, startDate, endDate)
+        ]);
+        
+        res.json({
+            engagement: engagementData,
+            mood: moodData,
+            feedback: feedbackData,
+            gamification: gamificationData,
+            objectives: objectivesData,
+            performance: performanceData,
+            topUsers: topUsersData
+        });
+        
+    } catch (error) {
+        console.error('Erro ao buscar dados abrangentes:', error);
+        res.status(500).json({ error: 'Erro ao buscar dados abrangentes' });
+    }
+});
+
+// Funções auxiliares para buscar dados específicos
+async function getEngagementData(pool, userIdsParam, startDate, endDate) {
+    try {
+        // Total de usuários ativos
+        const totalUsersResult = await pool.request().query(`
+            SELECT COUNT(*) as total
+            FROM Users 
+            WHERE Id IN (${userIdsParam}) AND IsActive = 1
+        `);
+        
+        // Usuários engajados (que fizeram TODAS as 3 ações: humor E feedback E reconhecimento)
+        const activeUsersResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(DISTINCT u.Id) as active
+                FROM Users u
+                WHERE u.Id IN (${userIdsParam})
+                AND u.IsActive = 1
+                -- Registrou humor no período
+                AND EXISTS (
+                    SELECT 1 
+                    FROM DailyMood dm 
+                    WHERE dm.user_id = u.Id
+                    AND CAST(dm.created_at AS DATE) BETWEEN @startDate AND @endDate
+                )
+                -- Enviou feedback no período
+                AND EXISTS (
+                    SELECT 1 
+                    FROM Feedbacks f 
+                    WHERE f.from_user_id = u.Id
+                    AND CAST(f.created_at AS DATE) BETWEEN @startDate AND @endDate
+                )
+                -- Enviou reconhecimento no período
+                AND EXISTS (
+                    SELECT 1 
+                    FROM Recognitions r 
+                    WHERE r.from_user_id = u.Id
+                    AND CAST(r.created_at AS DATE) BETWEEN @startDate AND @endDate
+                )
+            `);
+        
+        // Detalhamento por tipo de ação
+        const moodEntriesResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(*) as total, COUNT(DISTINCT user_id) as users
+                FROM DailyMood 
+                WHERE user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const feedbackCountResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(*) as total, COUNT(DISTINCT from_user_id) as users
+                FROM Feedbacks 
+                WHERE from_user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const recognitionCountResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(*) as total, COUNT(DISTINCT from_user_id) as users
+                FROM Recognitions 
+                WHERE from_user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const totalUsers = totalUsersResult.recordset[0].total;
+        const activeUsers = activeUsersResult.recordset[0].active;
+        const participationRate = totalUsers > 0 ? Math.round((activeUsers / totalUsers) * 100) : 0;
+        
+        return {
+            participationRate,
+            activeUsers,
+            totalUsers,
+            moodEntries: moodEntriesResult.recordset[0].total,
+            moodUsers: moodEntriesResult.recordset[0].users,
+            feedbackCount: feedbackCountResult.recordset[0].total,
+            feedbackUsers: feedbackCountResult.recordset[0].users,
+            recognitionCount: recognitionCountResult.recordset[0].total,
+            recognitionUsers: recognitionCountResult.recordset[0].users
+        };
+    } catch (error) {
+        console.error('Erro ao buscar dados de engajamento:', error);
+        return { 
+            participationRate: 0, 
+            activeUsers: 0, 
+            totalUsers: 0, 
+            moodEntries: 0, 
+            moodUsers: 0,
+            feedbackCount: 0,
+            feedbackUsers: 0,
+            recognitionCount: 0,
+            recognitionUsers: 0
+        };
+    }
+}
+
+async function getMoodData(pool, userIdsParam, startDate, endDate) {
+    try {
+        const result = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    AVG(CAST(score AS FLOAT)) as averageMood,
+                    COUNT(*) as totalEntries,
+                    SUM(CASE WHEN score >= 4 THEN 1 ELSE 0 END) as positiveMood,
+                    SUM(CASE WHEN score <= 2 THEN 1 ELSE 0 END) as negativeMood
+                FROM DailyMood 
+                WHERE user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const data = result.recordset[0];
+        return {
+            averageMood: data.averageMood || 0,
+            totalEntries: data.totalEntries || 0,
+            positiveMood: data.positiveMood || 0,
+            negativeMood: data.negativeMood || 0
+        };
+    } catch (error) {
+        console.error('Erro ao buscar dados de humor:', error);
+        return { averageMood: 0, totalEntries: 0, positiveMood: 0, negativeMood: 0 };
+    }
+}
+
+async function getFeedbackData(pool, userIdsParam, startDate, endDate) {
+    try {
+        const feedbacksResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    COUNT(*) as totalFeedbacks,
+                    SUM(CASE WHEN type = 'Positivo' THEN 1 ELSE 0 END) as positiveFeedbacks,
+                    SUM(CASE WHEN type = 'Desenvolvimento' THEN 1 ELSE 0 END) as constructiveFeedbacks,
+                    SUM(CASE WHEN type = 'Sugestão' THEN 1 ELSE 0 END) as suggestionFeedbacks,
+                    SUM(CASE WHEN type = 'Outros' THEN 1 ELSE 0 END) as otherFeedbacks
+                FROM Feedbacks 
+                WHERE from_user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const recognitionsResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(*) as totalRecognitions
+                FROM Recognitions 
+                WHERE from_user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const feedbacks = feedbacksResult.recordset[0];
+        const recognitions = recognitionsResult.recordset[0];
+        
+        return {
+            totalFeedbacks: feedbacks.totalFeedbacks || 0,
+            totalRecognitions: recognitions.totalRecognitions || 0,
+            positiveFeedbacks: feedbacks.positiveFeedbacks || 0,
+            constructiveFeedbacks: feedbacks.constructiveFeedbacks || 0,
+            suggestionFeedbacks: feedbacks.suggestionFeedbacks || 0,
+            otherFeedbacks: feedbacks.otherFeedbacks || 0
+        };
+    } catch (error) {
+        console.error('Erro ao buscar dados de feedback:', error);
+        return { totalFeedbacks: 0, totalRecognitions: 0, positiveFeedbacks: 0, constructiveFeedbacks: 0, suggestionFeedbacks: 0, otherFeedbacks: 0 };
+    }
+}
+
+async function getGamificationData(pool, userIdsParam, startDate, endDate) {
+    try {
+        // Buscar pontos totais da tabela UserPoints (pontos acumulados)
+        const pointsResult = await pool.request().query(`
+            SELECT 
+                SUM(TotalPoints) as totalPoints,
+                COUNT(DISTINCT UserId) as activeUsers
+            FROM UserPoints 
+            WHERE UserId IN (${userIdsParam})
+            AND TotalPoints > 0
+        `);
+        
+        // Buscar badges da tabela Gamification
+        const badgesResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT COUNT(*) as badgesEarned
+                FROM Gamification 
+                WHERE UserId IN (${userIdsParam})
+                AND Action LIKE '%badge%'
+                AND CAST(CreatedAt AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        // Buscar top usuário da tabela UserPoints
+        const topUserResult = await pool.request().query(`
+            SELECT TOP 1
+                u.NomeCompleto as name,
+                up.TotalPoints as points
+            FROM UserPoints up
+            JOIN Users u ON up.UserId = u.Id
+            WHERE up.UserId IN (${userIdsParam})
+            AND up.TotalPoints > 0
+            ORDER BY up.TotalPoints DESC
+        `);
+        
+        const points = pointsResult.recordset[0];
+        const badges = badgesResult.recordset[0];
+        const topUser = topUserResult.recordset[0];
+        
+        return {
+            totalPoints: points.totalPoints || 0,
+            activeUsers: points.activeUsers || 0,
+            topUser: topUser ? { name: topUser.name, points: topUser.points } : null,
+            badgesEarned: badges.badgesEarned || 0
+        };
+    } catch (error) {
+        console.error('Erro ao buscar dados de gamificação:', error);
+        return { totalPoints: 0, activeUsers: 0, topUser: null, badgesEarned: 0 };
+    }
+}
+
+async function getObjectivesData(pool, userIdsParam, startDate, endDate) {
+    try {
+        // Verificar se a tabela Objetivos existe
+        const tableCheck = await pool.request().query(`
+            SELECT COUNT(*) as tableExists 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'Objetivos'
+        `);
+        
+        if (tableCheck.recordset[0].tableExists === 0) {
+            console.log('⚠️ Tabela Objetivos não existe ainda');
+            return { totalObjectives: 0, completedObjectives: 0, inProgressObjectives: 0 };
+        }
+        
+        const result = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    COUNT(*) as totalObjectives,
+                    SUM(CASE WHEN status = 'Concluído' THEN 1 ELSE 0 END) as completedObjectives,
+                    SUM(CASE WHEN status = 'Ativo' THEN 1 ELSE 0 END) as inProgressObjectives
+                FROM Objetivos 
+                WHERE responsavel_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const data = result.recordset[0];
+        return {
+            totalObjectives: data.totalObjectives || 0,
+            completedObjectives: data.completedObjectives || 0,
+            inProgressObjectives: data.inProgressObjectives || 0
+        };
+    } catch (error) {
+        console.log('⚠️ Erro ao buscar dados de objetivos (retornando dados vazios):', error.message);
+        return { totalObjectives: 0, completedObjectives: 0, inProgressObjectives: 0 };
+    }
+}
+
+async function getPerformanceData(pool, userIdsParam, startDate, endDate) {
+    try {
+        // Verificar se a tabela DailyMood existe
+        const tableCheck = await pool.request().query(`
+            SELECT COUNT(*) as tableExists 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'DailyMood'
+        `);
+        
+        if (tableCheck.recordset[0].tableExists === 0) {
+            console.log('⚠️ Tabela DailyMood não existe ainda');
+            return { averageScore: 0, totalEvaluations: 0, highPerformers: 0, improvementNeeded: 0 };
+        }
+        
+        // Simular dados de performance baseados em humor e engajamento
+        const moodResult = await pool.request()
+            .input('startDate', sql.Date, startDate)
+            .input('endDate', sql.Date, endDate)
+            .query(`
+                SELECT 
+                    AVG(CAST(score AS FLOAT)) as averageScore,
+                    COUNT(*) as totalEvaluations,
+                    SUM(CASE WHEN score >= 4 THEN 1 ELSE 0 END) as highPerformers,
+                    SUM(CASE WHEN score <= 2 THEN 1 ELSE 0 END) as improvementNeeded
+                FROM DailyMood 
+                WHERE user_id IN (${userIdsParam})
+                AND CAST(created_at AS DATE) BETWEEN @startDate AND @endDate
+            `);
+        
+        const data = moodResult.recordset[0];
+        return {
+            averageScore: (data.averageScore || 0) * 20, // Converter para escala 0-100
+            totalEvaluations: data.totalEvaluations || 0,
+            highPerformers: data.highPerformers || 0,
+            improvementNeeded: data.improvementNeeded || 0
+        };
+    } catch (error) {
+        console.log('⚠️ Erro ao buscar dados de performance (retornando dados vazios):', error.message);
+        return { averageScore: 0, totalEvaluations: 0, highPerformers: 0, improvementNeeded: 0 };
+    }
+}
+
+async function getTopUsersData(pool, userIdsParam, startDate, endDate) {
+    try {
+        // Verificar se a tabela UserPoints existe
+        const tableCheck = await pool.request().query(`
+            SELECT COUNT(*) as tableExists 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'UserPoints'
+        `);
+        
+        if (tableCheck.recordset[0].tableExists === 0) {
+            console.log('⚠️ Tabela UserPoints não existe ainda');
+            return [];
+        }
+        
+        const result = await pool.request().query(`
+            SELECT TOP 10
+                u.NomeCompleto as name,
+                u.Departamento as department,
+                up.TotalPoints as points
+            FROM UserPoints up
+            JOIN Users u ON up.UserId = u.Id
+            WHERE up.UserId IN (${userIdsParam})
+            AND up.TotalPoints > 0
+            ORDER BY up.TotalPoints DESC
+        `);
+        
+        return result.recordset.map(user => ({
+            name: user.name,
+            department: user.department,
+            points: user.points || 0
+        }));
+    } catch (error) {
+        console.log('⚠️ Erro ao buscar top usuários (retornando lista vazia):', error.message);
+        return [];
+    }
+}
+
+// Analytics e relatórios (API antiga para compatibilidade)
 app.get('/api/analytics', requireAuth, requireManagerAccess, async (req, res) => {
     try {
         initializeManagers();
@@ -5657,9 +8332,11 @@ app.get('/api/analytics', requireAuth, requireManagerAccess, async (req, res) =>
 app.get('/api/analytics/export', requireAuth, requireManagerAccess, async (req, res) => {
     try {
         initializeManagers();
-        const { period = 30, department, type = 'engagement', format = 'csv' } = req.query;
+        const { period = 30, department, format = 'csv' } = req.query;
         const currentUser = req.session.user;
         const pool = await sql.connect(dbConfig);
+        
+        console.log('📊 Exportando relatório:', { period, department, format });
         
         // Usar HierarchyManager para buscar usuários acessíveis
         const accessibleUsers = await hierarchyManager.getAccessibleUsers(currentUser, {
@@ -5673,102 +8350,217 @@ app.get('/api/analytics/export', requireAuth, requireManagerAccess, async (req, 
         const userIds = accessibleUsers.map(user => user.userId);
         const userIdsParam = userIds.join(',');
         
-        let reportData = '';
-        let filename = '';
-        let contentType = '';
-        
-        // Gerar relatório baseado no tipo
-        if (type === 'engagement') {
+        // Buscar dados de engajamento (padrão)
             const result = await pool.request()
                 .input('period', sql.Int, parseInt(period))
                 .query(`
                     SELECT 
                         u.NomeCompleto,
                         u.Departamento,
-                        COUNT(DISTINCT f.Id) as totalFeedbacks,
-                        COUNT(DISTINCT r.Id) as totalRecognitions,
-                        COUNT(DISTINCT dm.Id) as moodEntries,
-                        AVG(CAST(dm.score AS FLOAT)) as avgMood
+                    u.Departamento,
+                    COUNT(DISTINCT f_received.Id) as FeedbacksRecebidos,
+                    COUNT(DISTINCT f_sent.Id) as FeedbacksEnviados,
+                    COUNT(DISTINCT r_received.Id) as ReconhecimentosRecebidos,
+                    COUNT(DISTINCT r_sent.Id) as ReconhecimentosEnviados,
+                    COUNT(DISTINCT dm.Id) as EntradasHumor,
+                    AVG(CAST(dm.score AS FLOAT)) as HumorMedio
                     FROM Users u
-                    LEFT JOIN Feedbacks f ON u.Id = f.to_user_id 
-                        AND CAST(f.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
-                    LEFT JOIN Recognitions r ON u.Id = r.to_user_id 
-                        AND CAST(r.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
+                LEFT JOIN Feedbacks f_received ON u.Id = f_received.to_user_id 
+                    AND CAST(f_received.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
+                LEFT JOIN Feedbacks f_sent ON u.Id = f_sent.from_user_id 
+                    AND CAST(f_sent.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
+                LEFT JOIN Recognitions r_received ON u.Id = r_received.to_user_id 
+                    AND CAST(r_received.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
+                LEFT JOIN Recognitions r_sent ON u.Id = r_sent.from_user_id 
+                    AND CAST(r_sent.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
                     LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
                         AND CAST(dm.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
                     WHERE u.Id IN (${userIdsParam})
-                    GROUP BY u.Id, u.NomeCompleto, u.Departamento
-                    ORDER BY totalFeedbacks DESC
-                `);
-            
-            if (format === 'csv') {
-                reportData = 'Nome,Departamento,Feedbacks,Reconhecimentos,Entradas de Humor,Humor Médio\n';
-                result.recordset.forEach(row => {
-                    reportData += `${row.NomeCompleto},${row.Departamento},${row.totalFeedbacks},${row.totalRecognitions},${row.moodEntries},${row.avgMood || 0}\n`;
-                });
-                contentType = 'text/csv';
-                filename = `relatorio_engajamento_${new Date().toISOString().split('T')[0]}.csv`;
-            } else {
-                reportData = `Relatório de Engajamento - Período: ${period} dias\n`;
-                reportData += `Departamento: ${department || 'Todos'}\n`;
-                reportData += `Gerado em: ${new Date().toLocaleString('pt-BR')}\n\n`;
-                result.recordset.forEach(row => {
-                    reportData += `${row.NomeCompleto} (${row.Departamento}): ${row.totalFeedbacks} feedbacks, ${row.totalRecognitions} reconhecimentos, humor médio: ${row.avgMood || 0}\n`;
-                });
-                contentType = 'text/plain';
-                filename = `relatorio_engajamento_${new Date().toISOString().split('T')[0]}.txt`;
-            }
-        } else if (type === 'participation') {
-            const result = await pool.request()
-                .input('period', sql.Int, parseInt(period))
-                .query(`
-                    SELECT 
-                        u.NomeCompleto,
-                        u.Departamento,
-                        COUNT(DISTINCT f.Id) as feedbacksEnviados,
-                        COUNT(DISTINCT r.Id) as reconhecimentosEnviados,
-                        COUNT(DISTINCT dm.Id) as entradasHumor,
-                        COUNT(DISTINCT o.Id) as objetivosAtivos
-                    FROM Users u
-                    LEFT JOIN Feedbacks f ON u.Id = f.from_user_id 
-                        AND CAST(f.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
-                    LEFT JOIN Recognitions r ON u.Id = r.from_user_id 
-                        AND CAST(r.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
-                    LEFT JOIN DailyMood dm ON u.Id = dm.user_id 
-                        AND CAST(dm.created_at AS DATE) >= CAST(DATEADD(day, -@period, GETDATE()) AS DATE)
-                    LEFT JOIN Objetivos o ON u.Id = o.responsavel_id 
-                        AND o.status = 'Ativo'
-                    WHERE u.Id IN (${userIdsParam})
-                    GROUP BY u.Id, u.NomeCompleto, u.Departamento
-                    ORDER BY feedbacksEnviados DESC
-                `);
-            
-            if (format === 'csv') {
-                reportData = 'Nome,Departamento,Feedbacks Enviados,Reconhecimentos Enviados,Entradas de Humor,Objetivos Ativos\n';
-                result.recordset.forEach(row => {
-                    reportData += `${row.NomeCompleto},${row.Departamento},${row.feedbacksEnviados},${row.reconhecimentosEnviados},${row.entradasHumor},${row.objetivosAtivos}\n`;
-                });
-                contentType = 'text/csv';
-                filename = `relatorio_participacao_${new Date().toISOString().split('T')[0]}.csv`;
-            } else {
-                reportData = `Relatório de Participação - Período: ${period} dias\n`;
-                reportData += `Departamento: ${department || 'Todos'}\n`;
-                reportData += `Gerado em: ${new Date().toLocaleString('pt-BR')}\n\n`;
-                result.recordset.forEach(row => {
-                    reportData += `${row.NomeCompleto} (${row.Departamento}): ${row.feedbacksEnviados} feedbacks enviados, ${row.reconhecimentosEnviados} reconhecimentos enviados\n`;
-                });
-                contentType = 'text/plain';
-                filename = `relatorio_participacao_${new Date().toISOString().split('T')[0]}.txt`;
-            }
-        } else {
-            return res.status(400).json({ error: 'Tipo de relatório não suportado' });
-        }
+                GROUP BY u.Id, u.NomeCompleto, u.Departamento, u.Departamento
+                ORDER BY u.NomeCompleto
+            `);
         
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+        // Formato Excel (arquivo .xlsx real com formatação)
+        if (format === 'excel') {
+            const ExcelJS = require('exceljs');
+            const workbook = new ExcelJS.Workbook();
+            const worksheet = workbook.addWorksheet('Relatório de Analytics');
+            
+            // Configurar propriedades do workbook
+            workbook.creator = 'LumiGente - Lumicenter';
+            workbook.created = new Date();
+            workbook.modified = new Date();
+            
+            // Adicionar título
+            worksheet.mergeCells('A1:I1');
+            const titleCell = worksheet.getCell('A1');
+            titleCell.value = '📊 RELATÓRIO DE ANÁLISES - LUMIGENTE';
+            titleCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+            titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
+            titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+            worksheet.getRow(1).height = 30;
+            
+            // Adicionar informações do relatório
+            worksheet.mergeCells('A2:I2');
+            const infoCell = worksheet.getCell('A2');
+            infoCell.value = `Período: Últimos ${period} dias | Departamento: ${department || 'Todos'} | Gerado em: ${new Date().toLocaleString('pt-BR')}`;
+            infoCell.font = { name: 'Arial', size: 10, italic: true };
+            infoCell.alignment = { vertical: 'middle', horizontal: 'center' };
+            worksheet.getRow(2).height = 20;
+            
+            // Definir cabeçalhos
+            worksheet.getRow(4).values = [
+                'Nome',
+                'Departamento',
+                'Departamento',
+                'Feedbacks Recebidos',
+                'Feedbacks Enviados',
+                'Reconhecimentos Recebidos',
+                'Reconhecimentos Enviados',
+                'Entradas de Humor',
+                'Humor Médio'
+            ];
+            
+            // Estilizar cabeçalhos
+            worksheet.getRow(4).font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+            worksheet.getRow(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
+            worksheet.getRow(4).alignment = { vertical: 'middle', horizontal: 'center' };
+            worksheet.getRow(4).height = 25;
+            
+            // Adicionar bordas aos cabeçalhos
+            for (let col = 1; col <= 9; col++) {
+                const cell = worksheet.getRow(4).getCell(col);
+                cell.border = {
+                    top: { style: 'thin', color: { argb: 'FF000000' } },
+                    left: { style: 'thin', color: { argb: 'FF000000' } },
+                    bottom: { style: 'thin', color: { argb: 'FF000000' } },
+                    right: { style: 'thin', color: { argb: 'FF000000' } }
+                };
+            }
+            
+            // Adicionar dados
+            let rowIndex = 5;
+            result.recordset.forEach((row, index) => {
+                const dataRow = worksheet.getRow(rowIndex);
+                dataRow.values = [
+                    row.NomeCompleto || '',
+                    row.Departamento || '',
+                    row.Departamento || '',
+                    row.FeedbacksRecebidos || 0,
+                    row.FeedbacksEnviados || 0,
+                    row.ReconhecimentosRecebidos || 0,
+                    row.ReconhecimentosEnviados || 0,
+                    row.EntradasHumor || 0,
+                    row.HumorMedio ? parseFloat(row.HumorMedio.toFixed(2)) : 0
+                ];
+                
+                // Alternar cores das linhas
+                if (index % 2 === 0) {
+                    dataRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+                }
+                
+                // Alinhar células
+                dataRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+                dataRow.getCell(2).alignment = { vertical: 'middle', horizontal: 'left' };
+                dataRow.getCell(3).alignment = { vertical: 'middle', horizontal: 'left' };
+                for (let col = 4; col <= 9; col++) {
+                    dataRow.getCell(col).alignment = { vertical: 'middle', horizontal: 'center' };
+                }
+                
+                // Adicionar bordas
+                for (let col = 1; col <= 9; col++) {
+                    const cell = dataRow.getCell(col);
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        left: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } },
+                        right: { style: 'thin', color: { argb: 'FFD1D5DB' } }
+                    };
+                }
+                
+                dataRow.font = { name: 'Arial', size: 10 };
+                dataRow.height = 20;
+                rowIndex++;
+            });
+            
+            // Ajustar largura das colunas
+            worksheet.getColumn(1).width = 30; // Nome
+            worksheet.getColumn(2).width = 20; // Departamento
+                worksheet.getColumn(3).width = 20; // Departamento
+            worksheet.getColumn(4).width = 18; // Feedbacks Recebidos
+            worksheet.getColumn(5).width = 18; // Feedbacks Enviados
+            worksheet.getColumn(6).width = 22; // Reconhecimentos Recebidos
+            worksheet.getColumn(7).width = 22; // Reconhecimentos Enviados
+            worksheet.getColumn(8).width = 18; // Entradas de Humor
+            worksheet.getColumn(9).width = 15; // Humor Médio
+            
+            // Formatação numérica para Humor Médio
+            for (let i = 5; i < rowIndex; i++) {
+                worksheet.getRow(i).getCell(9).numFmt = '0.00';
+            }
+            
+            // Gerar buffer do arquivo Excel
+            const buffer = await workbook.xlsx.writeBuffer();
+            
+            // Enviar arquivo
+            const filename = `relatorio_analytics_${new Date().toISOString().split('T')[0]}.xlsx`;
+            res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(buffer);
+            
+            console.log('✅ Relatório Excel exportado com sucesso:', filename);
+        } else if (format === 'csv') {
+            // Formato CSV
+            const BOM = '\uFEFF';
+            let reportData = BOM + 'Nome,Departamento,Feedbacks Recebidos,Feedbacks Enviados,Reconhecimentos Recebidos,Reconhecimentos Enviados,Entradas de Humor,Humor Médio\n';
+            
+                result.recordset.forEach(row => {
+                const nome = `"${(row.NomeCompleto || '').replace(/"/g, '""')}"`;
+                const dept = `"${(row.Departamento || '').replace(/"/g, '""')}"`;
+                const humorMedio = row.HumorMedio ? row.HumorMedio.toFixed(2) : '0.00';
+                
+                reportData += `${nome},${dept},${row.FeedbacksRecebidos || 0},${row.FeedbacksEnviados || 0},${row.ReconhecimentosRecebidos || 0},${row.ReconhecimentosEnviados || 0},${row.EntradasHumor || 0},${humorMedio}\n`;
+            });
+            
+            const filename = `relatorio_analytics_${new Date().toISOString().split('T')[0]}.csv`;
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(reportData);
+            
+            console.log('✅ Relatório CSV exportado com sucesso:', filename);
+            } else {
+            // Formato texto plano
+            let reportData = `═══════════════════════════════════════════════════\n`;
+            reportData += `  RELATÓRIO DE ANÁLISES - LUMIGENTE\n`;
+            reportData += `═══════════════════════════════════════════════════\n\n`;
+            reportData += `Período: Últimos ${period} dias\n`;
+                reportData += `Departamento: ${department || 'Todos'}\n`;
+            reportData += `Gerado em: ${new Date().toLocaleString('pt-BR')}\n`;
+            reportData += `Total de colaboradores: ${result.recordset.length}\n\n`;
+            reportData += `═══════════════════════════════════════════════════\n\n`;
+            
+            result.recordset.forEach((row, index) => {
+                reportData += `${index + 1}. ${row.NomeCompleto}\n`;
+                reportData += `   Departamento: ${row.Departamento || 'N/A'}\n`;
+                reportData += `   Cargo: ${row.Departamento || 'N/A'}\n`;
+                reportData += `   📥 Feedbacks Recebidos: ${row.FeedbacksRecebidos || 0}\n`;
+                reportData += `   📤 Feedbacks Enviados: ${row.FeedbacksEnviados || 0}\n`;
+                reportData += `   🏆 Reconhecimentos Recebidos: ${row.ReconhecimentosRecebidos || 0}\n`;
+                reportData += `   🎯 Reconhecimentos Enviados: ${row.ReconhecimentosEnviados || 0}\n`;
+                reportData += `   😊 Entradas de Humor: ${row.EntradasHumor || 0}\n`;
+                reportData += `   📊 Humor Médio: ${row.HumorMedio ? row.HumorMedio.toFixed(2) : 'N/A'}\n`;
+                reportData += `\n`;
+            });
+            
+            const filename = `relatorio_analytics_${new Date().toISOString().split('T')[0]}.txt`;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(reportData);
+            
+            console.log('✅ Relatório TXT exportado com sucesso:', filename);
+        }
     } catch (error) {
-        console.error('Erro ao exportar relatório:', error);
+        console.error('❌ Erro ao exportar relatório:', error);
         res.status(500).json({ error: 'Erro ao exportar relatório' });
     }
 });
@@ -5778,7 +8570,7 @@ app.get('/api/analytics/export', requireAuth, requireManagerAccess, async (req, 
 // Atualizar perfil do usuário
 app.put('/api/usuario/profile', requireAuth, async (req, res) => {
     try {
-        const { nomeCompleto, nome, departamento, cargo } = req.body;
+        const { nomeCompleto, nome, departamento } = req.body;
         const userId = req.session.user.userId;
         
         const pool = await sql.connect(dbConfig);
@@ -5788,13 +8580,11 @@ app.put('/api/usuario/profile', requireAuth, async (req, res) => {
             .input('nomeCompleto', sql.VarChar, nomeCompleto)
             .input('nome', sql.VarChar, nome)
             .input('departamento', sql.VarChar, departamento)
-            .input('cargo', sql.VarChar, cargo)
             .query(`
                 UPDATE Users 
                 SET NomeCompleto = @nomeCompleto,
                     nome = @nome,
-                    Departamento = @departamento, 
-                    Cargo = @cargo,
+                    Departamento = @departamento,
                     updated_at = GETDATE()
                 WHERE Id = @userId
             `);
@@ -5969,389 +8759,107 @@ app.get('/api/sync/status', requireAuth, async (req, res) => {
 
 
 
+// =====================================================
+// NOVO SISTEMA DE PESQUISAS - INTEGRAÇÃO
+// =====================================================
+
+// Importar e usar as novas rotas de pesquisas
+const surveysRouter = require('./routes/surveys');
+app.use('/api/surveys', surveysRouter);
+
+// Endpoint para verificar permissões de migração
+app.get('/api/migrate-surveys/check-permissions', requireAuth, async (req, res) => {
+    try {
+        const user = req.session.user;
+        
+        const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+        const isAdmin = user.role === 'Administrador';
+        const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+        const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                     departamento.includes('TREINAMENTO') || 
+                     departamento.includes('DESENVOLVIMENTO') ||
+                     departamento.includes('T&D');
+        
+        const canMigrate = isAdmin || isHR || isTD;
+        
+        res.json({
+            canMigrate,
+            user: {
+                nome: user.nomeCompleto,
+                departamento: user.departamento,
+                role: user.role,
+                isAdmin,
+                isHR,
+                isTD
+            },
+            requirements: {
+                message: canMigrate ? 
+                    'Usuário tem permissões para executar a migração' : 
+                    'Usuário não tem permissões para executar a migração',
+                requiredRoles: ['Administrador', 'RH (Recursos Humanos)', 'T&D (Treinamento & Desenvolvimento)']
+            }
+        });
+        
+    } catch (error) {
+        console.error('Erro ao verificar permissões:', error);
+        res.status(500).json({ error: 'Erro ao verificar permissões' });
+    }
+});
+
+// Endpoint para migrar para o novo sistema
+app.post('/api/migrate-surveys', requireAuth, async (req, res) => {
+    try {
+        const user = req.session.user;
+        
+        // Verificar se é administrador, RH ou T&D
+        const departamento = user.departamento ? user.departamento.toUpperCase() : '';
+        const isAdmin = user.role === 'Administrador';
+        const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+        const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                     departamento.includes('TREINAMENTO') || 
+                     departamento.includes('DESENVOLVIMENTO') ||
+                     departamento.includes('T&D');
+        
+        if (!isAdmin && !isHR && !isTD) {
+            return res.status(403).json({ 
+                error: 'Acesso negado. Apenas administradores, usuários de RH e T&D podem executar a migração.',
+                userInfo: {
+                    departamento: user.departamento,
+                    role: user.role,
+                    isAdmin,
+                    isHR,
+                    isTD
+                }
+            });
+        }
+        
+        console.log(`🔧 Migração iniciada por: ${user.nomeCompleto} (${user.departamento})`);
+        
+        const { migrarSistema } = require('./migrate_to_new_surveys');
+        await migrarSistema();
+        
+        res.json({ 
+            success: true, 
+            message: 'Migração para o novo sistema de pesquisas concluída com sucesso!' 
+        });
+        
+    } catch (error) {
+        console.error('Erro na migração:', error);
+        res.status(500).json({ 
+            error: 'Erro na migração: ' + error.message 
+        });
+    }
+});
+
 // Rota para buscar usuários para feedback (SEM limitações hierárquicas)
 app.get('/api/users/feedback', requireAuth, async (req, res) => {
     try {
         initializeManagers();
-        console.log('📋 Buscando usuários para feedback (universal)');
         const users = await hierarchyManager.getUsersForFeedback();
         res.json(users);
     } catch (error) {
         console.error('❌ Erro ao buscar usuários para feedback:', error);
         res.status(500).json({ error: 'Erro interno do servidor' });
-    }
-});
-
-// Buscar avaliação para responder
-app.get('/api/avaliacoes/:id/responder', requireAuth, async (req, res) => {
-    try {
-        const avaliacaoId = parseInt(req.params.id);
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário pode responder esta avaliação
-        const colaboradorResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT ac.*, a.titulo, a.descricao, a.tipo, a.data_fim
-                FROM AvaliacaoColaboradores ac
-                INNER JOIN Avaliacoes a ON ac.avaliacao_id = a.Id
-                WHERE ac.avaliacao_id = @avaliacaoId AND ac.colaborador_id = @userId
-            `);
-        
-        if (colaboradorResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Você não tem permissão para responder esta avaliação' });
-        }
-        
-        const colaborador = colaboradorResult.recordset[0];
-        
-        // Verificar se já foi respondida
-        if (colaborador.status === 'Concluida') {
-            return res.status(400).json({ error: 'Esta avaliação já foi respondida por você' });
-        }
-        
-        // Verificar se ainda está no prazo
-        if (new Date() > new Date(colaborador.data_fim)) {
-            return res.status(400).json({ error: 'O prazo para responder esta avaliação já expirou' });
-        }
-        
-        // Buscar perguntas da avaliação
-        const perguntasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .query(`
-                SELECT Id, pergunta, tipo, ordem, escala_min, escala_max, opcoes
-                FROM AvaliacaoPerguntas
-                WHERE avaliacao_id = @avaliacaoId
-                ORDER BY ordem
-            `);
-        
-        res.json({
-            avaliacao: {
-                Id: avaliacaoId,
-                titulo: colaborador.titulo,
-                descricao: colaborador.descricao,
-                tipo: colaborador.tipo,
-                data_fim: colaborador.data_fim
-            },
-            perguntas: perguntasResult.recordset
-        });
-    } catch (error) {
-        console.error('Erro ao buscar avaliação:', error);
-        res.status(500).json({ error: 'Erro ao buscar avaliação' });
-    }
-});
-
-// Submeter respostas da avaliação
-app.post('/api/avaliacoes/:id/responder', requireAuth, async (req, res) => {
-    try {
-        const avaliacaoId = parseInt(req.params.id);
-        const userId = req.session.user.userId;
-        const { respostas } = req.body;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário pode responder
-        const colaboradorResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT status FROM AvaliacaoColaboradores
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (colaboradorResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Você não tem permissão para responder esta avaliação' });
-        }
-        
-        if (colaboradorResult.recordset[0].status === 'Concluida') {
-            return res.status(400).json({ error: 'Esta avaliação já foi respondida por você' });
-        }
-        
-        // Buscar perguntas para obter o texto
-        const perguntasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .query(`
-                SELECT Id, pergunta FROM AvaliacaoPerguntas
-                WHERE avaliacao_id = @avaliacaoId
-            `);
-        
-        const perguntasMap = {};
-        perguntasResult.recordset.forEach(p => {
-            perguntasMap[p.Id] = p.pergunta;
-        });
-        
-        // Inserir respostas
-        for (const resposta of respostas) {
-            const perguntaTexto = perguntasMap[resposta.pergunta_id] || 'Pergunta não encontrada';
-            
-            await pool.request()
-                .input('avaliacaoId', sql.Int, avaliacaoId)
-                .input('perguntaId', sql.Int, resposta.pergunta_id)
-                .input('colaboradorId', sql.Int, userId)
-                .input('pergunta', sql.Text, perguntaTexto)
-                .input('resposta', sql.Text, resposta.resposta)
-                .query(`
-                    INSERT INTO AvaliacaoRespostas (avaliacao_id, avaliacao_pergunta_id, colaborador_id, pergunta, resposta)
-                    VALUES (@avaliacaoId, @perguntaId, @colaboradorId, @pergunta, @resposta)
-                `);
-        }
-        
-        // Atualizar status do colaborador
-        await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .input('userId', sql.Int, userId)
-            .query(`
-                UPDATE AvaliacaoColaboradores
-                SET status = 'Concluida', data_resposta = GETDATE()
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        res.json({ success: true, message: 'Respostas enviadas com sucesso' });
-    } catch (error) {
-        console.error('Erro ao enviar respostas:', error);
-        res.status(500).json({ error: 'Erro ao enviar respostas' });
-    }
-});
-
-// Listar avaliações
-app.get('/api/avaliacoes', requireAuth, async (req, res) => {
-    try {
-        const { status, tipo } = req.query;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        let whereClause = 'WHERE 1=1';
-        const params = [];
-        
-        if (status) {
-            whereClause += ' AND a.status = @status';
-            params.push({ name: 'status', value: status });
-        }
-        
-        if (tipo) {
-            whereClause += ' AND a.tipo = @tipo';
-            params.push({ name: 'tipo', value: tipo });
-        }
-        
-        // Se não for gestor, mostrar apenas avaliações do usuário
-        const userResult = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT hierarchyLevel FROM Users WHERE Id = @userId
-            `);
-        
-        const isManager = userResult.recordset[0]?.hierarchyLevel >= 3;
-        
-        if (!isManager) {
-            whereClause += ' AND ac.colaborador_id = @userId';
-            params.push({ name: 'userId', value: userId });
-        }
-        
-        let request = pool.request();
-        params.forEach(param => {
-            request.input(param.name, sql.VarChar, param.value);
-        });
-        
-        const query = `
-            SELECT 
-                a.*,
-                u.NomeCompleto as criador_nome,
-                (SELECT COUNT(*) FROM AvaliacaoColaboradores WHERE avaliacao_id = a.Id) as total_colaboradores,
-                (SELECT COUNT(*) FROM AvaliacaoColaboradores WHERE avaliacao_id = a.Id AND status = 'Concluída') as colaboradores_concluidos
-            FROM Avaliacoes a
-            JOIN Users u ON a.criado_por = u.Id
-            ${!isManager ? 'JOIN AvaliacaoColaboradores ac ON a.Id = ac.avaliacao_id' : ''}
-            ${whereClause}
-            ORDER BY a.created_at DESC
-        `;
-        
-        const result = await request.query(query);
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao listar avaliações:', error);
-        res.status(500).json({ error: 'Erro ao listar avaliações' });
-    }
-});
-
-// Buscar avaliações pendentes do usuário
-app.get('/api/avaliacoes/pendentes', requireAuth, async (req, res) => {
-    try {
-        // Por enquanto, retornar array vazio já que não temos sistema de avaliações implementado
-        res.json([]);
-    } catch (error) {
-        console.error('Erro ao buscar avaliações pendentes:', error);
-        res.status(500).json({ error: 'Erro ao buscar avaliações pendentes' });
-    }
-});
-
-// Buscar histórico de avaliações do usuário
-app.get('/api/avaliacoes/historico', requireAuth, async (req, res) => {
-    try {
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        await ensureAvaliacaoTablesExist(pool);
-        
-        const result = await pool.request()
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    a.Id,
-                    a.titulo,
-                    a.descricao,
-                    a.tipo,
-                    a.data_inicio,
-                    a.data_fim,
-                    ac.status,
-                    ac.data_resposta,
-                    ah.periodo,
-                    ah.data_avaliacao
-                FROM Avaliacoes a
-                INNER JOIN AvaliacaoColaboradores ac ON a.Id = ac.avaliacao_id
-                LEFT JOIN AvaliacaoHistorico ah ON a.Id = ah.avaliacao_id AND ah.colaborador_id = @userId
-                WHERE ac.colaborador_id = @userId
-                ORDER BY a.created_at DESC
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar histórico de avaliações:', error);
-        res.status(500).json({ error: 'Erro ao buscar histórico de avaliações' });
-    }
-});
-
-// Buscar respostas de uma avaliação específica
-app.get('/api/avaliacoes/:id/respostas', requireAuth, async (req, res) => {
-    try {
-        const avaliacaoId = parseInt(req.params.id);
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        await ensureAvaliacaoTablesExist(pool);
-        
-        // Verificar se o usuário tem acesso a esta avaliação
-        const accessResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 1 FROM AvaliacaoColaboradores 
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (accessResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado a esta avaliação' });
-        }
-        
-        // Buscar respostas do colaborador e do gestor
-        const respostasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, avaliacaoId)
-            .input('colaboradorId', sql.Int, userId)
-            .query(`
-                SELECT 
-                    ar.pergunta,
-                    ar.resposta,
-                    ar.tipo_resposta,
-                    ar.created_at,
-                    u.NomeCompleto as respondente_nome
-                FROM AvaliacaoRespostas ar
-                LEFT JOIN Users u ON (ar.tipo_resposta = 'colaborador' AND ar.colaborador_id = u.Id) 
-                                  OR (ar.tipo_resposta = 'gestor' AND ar.gestor_id = u.Id)
-                WHERE ar.avaliacao_id = @avaliacaoId 
-                  AND ar.colaborador_id = @colaboradorId
-                ORDER BY ar.avaliacao_pergunta_id, ar.tipo_resposta
-            `);
-        
-        // Organizar respostas por pergunta
-        const respostasOrganizadas = {};
-        respostasResult.recordset.forEach(resposta => {
-            if (!respostasOrganizadas[resposta.pergunta]) {
-                respostasOrganizadas[resposta.pergunta] = {
-                    pergunta: resposta.pergunta,
-                    colaborador: null,
-                    gestor: null
-                };
-            }
-            
-            if (resposta.tipo_resposta === 'colaborador') {
-                respostasOrganizadas[resposta.pergunta].colaborador = {
-                    resposta: resposta.resposta,
-                    data: resposta.created_at,
-                    respondente: resposta.respondente_nome
-                };
-            } else if (resposta.tipo_resposta === 'gestor') {
-                respostasOrganizadas[resposta.pergunta].gestor = {
-                    resposta: resposta.resposta,
-                    data: resposta.created_at,
-                    respondente: resposta.respondente_nome
-                };
-            }
-        });
-        
-        res.json(Object.values(respostasOrganizadas));
-    } catch (error) {
-        console.error('Erro ao buscar respostas da avaliação:', error);
-        res.status(500).json({ error: 'Erro ao buscar respostas da avaliação' });
-    }
-});
-
-// Buscar perguntas de uma avaliação
-app.get('/api/avaliacoes/:id/perguntas', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário tem acesso à avaliação
-        const accessResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 1 FROM AvaliacaoColaboradores 
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (accessResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado a esta avaliação' });
-        }
-        
-        // Buscar perguntas
-        const result = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .query(`
-                SELECT id, pergunta, tipo, ordem
-                FROM AvaliacaoPerguntas 
-                WHERE avaliacao_id = @avaliacaoId 
-                ORDER BY ordem
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar perguntas da avaliação:', error);
-        res.status(500).json({ error: 'Erro ao buscar perguntas da avaliação' });
-    }
-});
-
-// Rota de debug para verificar tabelas
-app.get('/api/debug/tables', requireAuth, async (req, res) => {
-    try {
-        const pool = await sql.connect(dbConfig);
-        
-        const tables = ['Avaliacoes', 'AvaliacaoPerguntas', 'AvaliacaoColaboradores', 'AvaliacaoRespostas', 'Objetivos', 'ObjetivoCheckins'];
-        const results = {};
-        
-        for (const table of tables) {
-            try {
-                const result = await pool.request().query(`SELECT TOP 1 * FROM ${table}`);
-                results[table.toLowerCase()] = true;
-                console.log(`✅ Tabela ${table} existe`);
-            } catch (error) {
-                results[table.toLowerCase()] = false;
-                console.log(`❌ Tabela ${table} não existe:`, error.message);
-            }
-        }
-        
-        res.json(results);
-    } catch (error) {
-        console.error('Erro ao verificar tabelas:', error);
-        res.status(500).json({ error: 'Erro ao verificar tabelas' });
     }
 });
 
@@ -6392,49 +8900,69 @@ app.get('/api/debug/objetivos', requireAuth, async (req, res) => {
 });
 
 // Debug da hierarquia do usuário (GET)
+// CORREÇÃO: Agora suporta CPF como query parameter para casos de matrícula duplicada
 app.get('/api/debug/hierarchy/:matricula', requireAuth, async (req, res) => {
     try {
         const { matricula } = req.params;
+        const { cpf } = req.query;  // ✅ Suportar CPF como query parameter opcional
         const pool = await sql.connect(dbConfig);
         
-        console.log(`🔍 Verificando hierarquia para matrícula: ${matricula}`);
+        console.log(`🔍 Verificando hierarquia para matrícula: ${matricula}${cpf ? ' (CPF: ' + cpf + ')' : ''}`);
         
-        // Buscar dados do funcionário
-        const funcionarioResult = await pool.request()
-            .input('matricula', sql.VarChar, matricula)
-            .query(`
-                SELECT TOP 1 MATRICULA, NOME, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
-                FROM TAB_HIST_SRA 
-                WHERE MATRICULA = @matricula 
-                ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END
-            `);
+        // CORREÇÃO: Buscar dados do funcionário com filtro de CPF se disponível
+        const funcionarioQuery = cpf 
+            ? `SELECT TOP 1 MATRICULA, NOME, CPF, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
+               FROM TAB_HIST_SRA 
+               WHERE MATRICULA = @matricula AND CPF = @cpf
+               ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END`
+            : `SELECT TOP 1 MATRICULA, NOME, CPF, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
+               FROM TAB_HIST_SRA 
+               WHERE MATRICULA = @matricula 
+               ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END`;
         
-        // Buscar dados do usuário
-        const userResult = await pool.request()
-            .input('matricula', sql.VarChar, matricula)
-            .query(`
-                SELECT Id, NomeCompleto, HierarchyLevel, HierarchyPath, Departamento
-                FROM Users WHERE Matricula = @matricula
-            `);
+        const funcionarioRequest = pool.request().input('matricula', sql.VarChar, matricula);
+        if (cpf) funcionarioRequest.input('cpf', sql.VarChar, cpf);
+        const funcionarioResult = await funcionarioRequest.query(funcionarioQuery);
         
-        // Buscar hierarquias
-        const hierarquiaResult = await pool.request()
-            .input('matricula', sql.VarChar, matricula)
-            .query(`
-                SELECT * FROM HIERARQUIA_CC 
-                WHERE RESPONSAVEL_ATUAL = @matricula
-                   OR NIVEL_1_MATRICULA_RESP = @matricula
-                   OR NIVEL_2_MATRICULA_RESP = @matricula
-                   OR NIVEL_3_MATRICULA_RESP = @matricula
-                   OR NIVEL_4_MATRICULA_RESP = @matricula
-                ORDER BY LEN(HIERARQUIA_COMPLETA) DESC
-            `);
+        // CORREÇÃO: Buscar dados do usuário com filtro de CPF se disponível
+        const userQuery = cpf
+            ? `SELECT Id, NomeCompleto, CPF, HierarchyPath, Departamento
+               FROM Users WHERE Matricula = @matricula AND CPF = @cpf`
+            : `SELECT Id, NomeCompleto, CPF, HierarchyPath, Departamento
+               FROM Users WHERE Matricula = @matricula`;
+        
+        const userRequest = pool.request().input('matricula', sql.VarChar, matricula);
+        if (cpf) userRequest.input('cpf', sql.VarChar, cpf);
+        const userResult = await userRequest.query(userQuery);
+        
+        // CORREÇÃO: Buscar hierarquias com filtro de CPF se disponível
+        const cpfParaUsar = cpf || (funcionarioResult.recordset[0]?.CPF);
+        const hierarquiaQuery = cpfParaUsar
+            ? `SELECT * FROM HIERARQUIA_CC 
+               WHERE (RESPONSAVEL_ATUAL = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_1_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_2_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_3_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_4_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+               ORDER BY LEN(HIERARQUIA_COMPLETA) DESC`
+            : `SELECT * FROM HIERARQUIA_CC 
+               WHERE RESPONSAVEL_ATUAL = @matricula
+                  OR NIVEL_1_MATRICULA_RESP = @matricula
+                  OR NIVEL_2_MATRICULA_RESP = @matricula
+                  OR NIVEL_3_MATRICULA_RESP = @matricula
+                  OR NIVEL_4_MATRICULA_RESP = @matricula
+               ORDER BY LEN(HIERARQUIA_COMPLETA) DESC`;
+        
+        const hierarquiaRequest = pool.request().input('matricula', sql.VarChar, matricula);
+        if (cpfParaUsar) hierarquiaRequest.input('cpfBusca', sql.VarChar, cpfParaUsar);
+        const hierarquiaResult = await hierarquiaRequest.query(hierarquiaQuery);
         
         res.json({
             funcionario: funcionarioResult.recordset[0] || null,
             usuario: userResult.recordset[0] || null,
             hierarquias: hierarquiaResult.recordset,
-            recomendacao: hierarquiaResult.recordset.length > 0 ? 'Deveria ser gestor (nível 3+)' : 'Funcionário comum (nível 0)'
+            recomendacao: hierarquiaResult.recordset.length > 0 ? 'Deveria ser gestor (nível 3+)' : 'Funcionário comum (nível 0)',
+            aviso: !cpf && funcionarioResult.recordset.length > 1 ? 'ATENÇÃO: Matrícula duplicada! Passe CPF como query parameter para resultado específico' : null
         });
     } catch (error) {
         console.error('Erro ao verificar hierarquia:', error);
@@ -6443,22 +8971,29 @@ app.get('/api/debug/hierarchy/:matricula', requireAuth, async (req, res) => {
 });
 
 // Debug e correção da hierarquia do usuário
+// CORREÇÃO: Agora suporta CPF via body para casos de matrícula duplicada
 app.post('/api/debug/fix-hierarchy/:matricula', requireAuth, async (req, res) => {
     try {
         const { matricula } = req.params;
+        const { cpf } = req.body;  // ✅ Suportar CPF via body
         const pool = await sql.connect(dbConfig);
         
-        console.log(`🔧 Corrigindo hierarquia para matrícula: ${matricula}`);
+        console.log(`🔧 Corrigindo hierarquia para matrícula: ${matricula}${cpf ? ' (CPF: ' + cpf + ')' : ''}`);
         
-        // Buscar dados do funcionário
-        const funcionarioResult = await pool.request()
-            .input('matricula', sql.VarChar, matricula)
-            .query(`
-                SELECT TOP 1 MATRICULA, NOME, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
-                FROM TAB_HIST_SRA 
-                WHERE MATRICULA = @matricula 
-                ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END
-            `);
+        // CORREÇÃO: Buscar dados do funcionário com filtro de CPF se disponível
+        const funcionarioQuery = cpf
+            ? `SELECT TOP 1 MATRICULA, NOME, CPF, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
+               FROM TAB_HIST_SRA 
+               WHERE MATRICULA = @matricula AND CPF = @cpf
+               ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END`
+            : `SELECT TOP 1 MATRICULA, NOME, CPF, DEPARTAMENTO, CENTRO_CUSTO, STATUS_GERAL
+               FROM TAB_HIST_SRA 
+               WHERE MATRICULA = @matricula 
+               ORDER BY CASE WHEN STATUS_GERAL = 'ATIVO' THEN 0 ELSE 1 END`;
+        
+        const funcionarioRequest = pool.request().input('matricula', sql.VarChar, matricula);
+        if (cpf) funcionarioRequest.input('cpf', sql.VarChar, cpf);
+        const funcionarioResult = await funcionarioRequest.query(funcionarioQuery);
         
         if (funcionarioResult.recordset.length === 0) {
             return res.status(404).json({ error: 'Funcionário não encontrado' });
@@ -6467,18 +9002,27 @@ app.post('/api/debug/fix-hierarchy/:matricula', requireAuth, async (req, res) =>
         const funcionario = funcionarioResult.recordset[0];
         console.log('Dados do funcionário:', funcionario);
         
-        // Buscar hierarquia onde é responsável
-        const hierarquiaRespResult = await pool.request()
-            .input('matricula', sql.VarChar, matricula)
-            .query(`
-                SELECT * FROM HIERARQUIA_CC 
-                WHERE RESPONSAVEL_ATUAL = @matricula
-                   OR NIVEL_1_MATRICULA_RESP = @matricula
-                   OR NIVEL_2_MATRICULA_RESP = @matricula
-                   OR NIVEL_3_MATRICULA_RESP = @matricula
-                   OR NIVEL_4_MATRICULA_RESP = @matricula
-                ORDER BY LEN(HIERARQUIA_COMPLETA) DESC
-            `);
+        // CORREÇÃO: Buscar hierarquia onde é responsável com filtro de CPF
+        const cpfParaUsar = cpf || funcionario.CPF;
+        const hierarquiaQuery = cpfParaUsar
+            ? `SELECT * FROM HIERARQUIA_CC 
+               WHERE (RESPONSAVEL_ATUAL = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_1_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_2_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_3_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+                  OR (NIVEL_4_MATRICULA_RESP = @matricula AND CPF_RESPONSAVEL = @cpfBusca)
+               ORDER BY LEN(HIERARQUIA_COMPLETA) DESC`
+            : `SELECT * FROM HIERARQUIA_CC 
+               WHERE RESPONSAVEL_ATUAL = @matricula
+                  OR NIVEL_1_MATRICULA_RESP = @matricula
+                  OR NIVEL_2_MATRICULA_RESP = @matricula
+                  OR NIVEL_3_MATRICULA_RESP = @matricula
+                  OR NIVEL_4_MATRICULA_RESP = @matricula
+               ORDER BY LEN(HIERARQUIA_COMPLETA) DESC`;
+        
+        const hierarquiaRespRequest = pool.request().input('matricula', sql.VarChar, matricula);
+        if (cpfParaUsar) hierarquiaRespRequest.input('cpfBusca', sql.VarChar, cpfParaUsar);
+        const hierarquiaRespResult = await hierarquiaRespRequest.query(hierarquiaQuery);
         
         console.log('Hierarquias onde aparece:', hierarquiaRespResult.recordset);
         
@@ -6510,13 +9054,11 @@ app.post('/api/debug/fix-hierarchy/:matricula', requireAuth, async (req, res) =>
         // Atualizar usuário
         const updateResult = await pool.request()
             .input('matricula', sql.VarChar, matricula)
-            .input('hierarchyLevel', sql.Int, level)
             .input('hierarchyPath', sql.VarChar, path)
             .input('departamento', sql.VarChar, departamento)
             .query(`
                 UPDATE Users 
-                SET HierarchyLevel = @hierarchyLevel,
-                    HierarchyPath = @hierarchyPath,
+                SET HierarchyPath = @hierarchyPath,
                     Departamento = @departamento,
                     updated_at = GETDATE()
                 WHERE Matricula = @matricula
@@ -6642,191 +9184,6 @@ app.get('/api/objetivos', requireAuth, async (req, res) => {
     }
 });
 
-// Responder avaliação
-app.post('/api/avaliacoes/:id/responder', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { responses } = req.body;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se o usuário tem acesso à avaliação
-        const accessResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT 1 FROM AvaliacaoColaboradores 
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (accessResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Acesso negado a esta avaliação' });
-        }
-        
-        // Salvar respostas
-        for (const response of responses) {
-            await pool.request()
-                .input('avaliacaoId', sql.Int, id)
-                .input('colaboradorId', sql.Int, userId)
-                .input('pergunta', sql.Text, response.question)
-                .input('resposta', sql.Text, response.answer)
-                .input('pontuacao', sql.Int, response.score)
-                .query(`
-                    INSERT INTO AvaliacaoRespostas (avaliacao_id, colaborador_id, pergunta, resposta, pontuacao)
-                    VALUES (@avaliacaoId, @colaboradorId, @pergunta, @resposta, @pontuacao)
-                `);
-        }
-        
-        // Marcar como concluída
-        await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('colaboradorId', sql.Int, userId)
-            .query(`
-                UPDATE AvaliacaoColaboradores 
-                SET status = 'Concluída', data_conclusao = GETDATE()
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @colaboradorId
-            `);
-        
-        res.json({ success: true, message: 'Avaliação respondida com sucesso' });
-    } catch (error) {
-        console.error('Erro ao responder avaliação:', error);
-        res.status(500).json({ error: 'Erro ao responder avaliação' });
-    }
-});
-
-// Buscar avaliação específica
-app.get('/api/avaliacoes/:id', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.session.user.userId;
-        
-        // Validar se o ID é um número válido
-        if (!id || isNaN(parseInt(id)) || parseInt(id) <= 0) {
-            return res.status(400).json({ error: 'ID da avaliação inválido' });
-        }
-        
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se as tabelas existem
-        try {
-            await pool.request().query('SELECT TOP 1 * FROM Avaliacoes');
-        } catch (tableError) {
-            return res.status(404).json({ error: 'Avaliação não encontrada' });
-        }
-        
-        // Buscar avaliação
-        const avaliacaoResult = await pool.request()
-            .input('avaliacaoId', sql.Int, parseInt(id))
-            .query(`
-                SELECT 
-                    a.*,
-                    u.NomeCompleto as criador_nome
-                FROM Avaliacoes a
-                JOIN Users u ON a.criado_por = u.Id
-                WHERE a.Id = @avaliacaoId
-            `);
-        
-        if (avaliacaoResult.recordset.length === 0) {
-            return res.status(404).json({ error: 'Avaliação não encontrada' });
-        }
-        
-        const avaliacao = avaliacaoResult.recordset[0];
-        
-        // Buscar perguntas
-        const perguntasResult = await pool.request()
-            .input('avaliacaoId', sql.Int, parseInt(id))
-            .query(`
-                SELECT * FROM AvaliacaoPerguntas 
-                WHERE avaliacao_id = @avaliacaoId 
-                ORDER BY ordem
-            `);
-        
-        // Buscar colaboradores
-        const colaboradoresResult = await pool.request()
-            .input('avaliacaoId', sql.Int, parseInt(id))
-            .query(`
-                SELECT 
-                    ac.*,
-                    u.NomeCompleto,
-                    u.Departamento,
-                    u.Cargo
-                FROM AvaliacaoColaboradores ac
-                JOIN Users u ON ac.colaborador_id = u.Id
-                WHERE ac.avaliacao_id = @avaliacaoId
-                ORDER BY u.NomeCompleto
-            `);
-        
-        avaliacao.perguntas = perguntasResult.recordset;
-        avaliacao.colaboradores = colaboradoresResult.recordset;
-        
-        res.json(avaliacao);
-    } catch (error) {
-        console.error('Erro ao buscar avaliação:', error);
-        
-        if (error.message && error.message.includes('Invalid object name')) {
-            return res.status(404).json({ error: 'Avaliação não encontrada' });
-        }
-        
-        res.status(500).json({ error: 'Erro ao buscar avaliação' });
-    }
-});
-
-// Responder avaliação
-app.post('/api/avaliacoes/:id/responder', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { respostas } = req.body;
-        const userId = req.session.user.userId;
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se usuário pode responder esta avaliação
-        const colaboradorResult = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('userId', sql.Int, userId)
-            .query(`
-                SELECT * FROM AvaliacaoColaboradores 
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @userId
-            `);
-        
-        if (colaboradorResult.recordset.length === 0) {
-            return res.status(403).json({ error: 'Você não pode responder esta avaliação' });
-        }
-        
-        if (colaboradorResult.recordset[0].status === 'Concluída') {
-            return res.status(400).json({ error: 'Avaliação já foi respondida' });
-        }
-        
-        // Inserir respostas
-        for (const resposta of respostas) {
-            await pool.request()
-                .input('avaliacaoId', sql.Int, id)
-                .input('colaboradorId', sql.Int, userId)
-                .input('perguntaId', sql.Int, resposta.perguntaId)
-                .input('resposta', sql.Text, resposta.resposta)
-                .input('score', sql.Int, resposta.score || null)
-                .query(`
-                    INSERT INTO AvaliacaoRespostas (avaliacao_id, colaborador_id, pergunta_id, resposta, score)
-                    VALUES (@avaliacaoId, @colaboradorId, @perguntaId, @resposta, @score)
-                `);
-        }
-        
-        // Marcar como concluída
-        await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .input('colaboradorId', sql.Int, userId)
-            .query(`
-                UPDATE AvaliacaoColaboradores 
-                SET status = 'Concluída', data_conclusao = GETDATE()
-                WHERE avaliacao_id = @avaliacaoId AND colaborador_id = @colaboradorId
-            `);
-        
-        res.json({ success: true, message: 'Avaliação respondida com sucesso' });
-    } catch (error) {
-        console.error('Erro ao responder avaliação:', error);
-        res.status(500).json({ error: 'Erro ao responder avaliação' });
-    }
-});
-
 // Função para verificar e criar tabelas de objetivos
 async function ensureObjetivosTablesExist(pool) {
     try {
@@ -6875,6 +9232,51 @@ async function ensureObjetivosTablesExist(pool) {
                 )
             `);
             console.log('✅ Tabela ObjetivoCheckins criada com sucesso');
+        }
+        
+        // Verificar se tabela ObjetivoResponsaveis existe (para objetivos compartilhados)
+        const responsaveisExists = await pool.request().query(`
+            SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = 'ObjetivoResponsaveis'
+        `);
+        
+        if (responsaveisExists.recordset[0].count === 0) {
+            console.log('Criando tabela ObjetivoResponsaveis...');
+            try {
+                // Primeiro criar a tabela básica
+                await pool.request().query(`
+                    CREATE TABLE ObjetivoResponsaveis (
+                        Id INT IDENTITY(1,1) PRIMARY KEY,
+                        objetivo_id INT NOT NULL,
+                        responsavel_id INT NOT NULL,
+                        created_at DATETIME DEFAULT GETDATE()
+                    )
+                `);
+                
+                // Adicionar constraints separadamente
+                await pool.request().query(`
+                    ALTER TABLE ObjetivoResponsaveis 
+                    ADD CONSTRAINT FK_ObjetivoResponsaveis_Objetivo 
+                        FOREIGN KEY (objetivo_id) REFERENCES Objetivos(Id) ON DELETE CASCADE
+                `);
+                
+                await pool.request().query(`
+                    ALTER TABLE ObjetivoResponsaveis 
+                    ADD CONSTRAINT FK_ObjetivoResponsaveis_User 
+                        FOREIGN KEY (responsavel_id) REFERENCES Users(Id) ON DELETE CASCADE
+                `);
+                
+                await pool.request().query(`
+                    ALTER TABLE ObjetivoResponsaveis 
+                    ADD CONSTRAINT UQ_ObjetivoResponsaveis 
+                        UNIQUE (objetivo_id, responsavel_id)
+                `);
+                
+                console.log('✅ Tabela ObjetivoResponsaveis criada com sucesso');
+            } catch (fkError) {
+                console.log('⚠️ Erro ao criar constraints FK, mas tabela básica criada:', fkError.message);
+                console.log('✅ Tabela ObjetivoResponsaveis criada (sem algumas constraints)');
+            }
         }
     } catch (error) {
         console.error('Erro ao verificar/criar tabelas de objetivos:', error);
@@ -6952,125 +9354,6 @@ app.get('/api/objetivos', requireAuth, async (req, res) => {
     }
 });
 
-// Buscar próximas avaliações do usuário
-app.get('/api/avaliacoes/pendentes', requireAuth, async (req, res) => {
-    try {
-        const userId = req.session.user.userId;
-        
-        // Validar se userId é um número válido
-        if (!userId || isNaN(parseInt(userId)) || parseInt(userId) <= 0) {
-            console.error('UserId inválido:', userId);
-            return res.status(400).json({ error: 'ID do usuário inválido' });
-        }
-        
-        const pool = await sql.connect(dbConfig);
-        
-        // Verificar se as tabelas existem
-        try {
-            await pool.request().query('SELECT TOP 1 * FROM Avaliacoes');
-        } catch (tableError) {
-            console.error('Tabela Avaliacoes não existe:', tableError.message);
-            return res.json([]);
-        }
-        
-        const result = await pool.request()
-            .input('userId', sql.Int, parseInt(userId))
-            .query(`
-                SELECT 
-                    a.Id,
-                    a.titulo,
-                    a.descricao,
-                    a.tipo,
-                    a.data_inicio,
-                    a.data_fim,
-                    a.status,
-                    ac.status as status_colaborador,
-                    u.NomeCompleto as criador_nome
-                FROM Avaliacoes a
-                JOIN AvaliacaoColaboradores ac ON a.Id = ac.avaliacao_id
-                JOIN Users u ON a.criado_por = u.Id
-                WHERE ac.colaborador_id = @userId 
-                AND a.status = 'Ativa'
-                AND ac.status = 'Pendente'
-                AND a.data_fim >= GETDATE()
-                ORDER BY a.data_fim ASC
-            `);
-        
-        res.json(result.recordset);
-    } catch (error) {
-        console.error('Erro ao buscar avaliações pendentes:', error);
-        
-        // Se for erro de tabela não existir, retornar array vazio
-        if (error.message && error.message.includes('Invalid object name')) {
-            return res.json([]);
-        }
-        
-        res.status(500).json({ error: 'Erro ao buscar avaliações pendentes' });
-    }
-});
-
-// Buscar resultados de avaliação (apenas para gestores)
-app.get('/api/avaliacoes/:id/resultados', requireAuth, requireManagerAccess, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const pool = await sql.connect(dbConfig);
-        
-        // Buscar respostas da avaliação
-        const result = await pool.request()
-            .input('avaliacaoId', sql.Int, id)
-            .query(`
-                SELECT 
-                    ar.*,
-                    ap.pergunta,
-                    ap.tipo as tipo_pergunta,
-                    u.NomeCompleto,
-                    u.Departamento
-                FROM AvaliacaoRespostas ar
-                JOIN AvaliacaoPerguntas ap ON ar.pergunta_id = ap.Id
-                JOIN Users u ON ar.colaborador_id = u.Id
-                WHERE ar.avaliacao_id = @avaliacaoId
-                ORDER BY u.NomeCompleto, ap.ordem
-            `);
-        
-        // Agrupar por colaborador
-        const resultados = {};
-        result.recordset.forEach(row => {
-            if (!resultados[row.colaborador_id]) {
-                resultados[row.colaborador_id] = {
-                    colaborador: {
-                        id: row.colaborador_id,
-                        nome: row.NomeCompleto,
-                        departamento: row.Departamento
-                    },
-                    respostas: []
-                };
-            }
-            
-            resultados[row.colaborador_id].respostas.push({
-                pergunta: row.pergunta,
-                tipo: row.tipo_pergunta,
-                resposta: row.resposta,
-                score: row.score
-            });
-        });
-        
-        res.json(Object.values(resultados));
-    } catch (error) {
-        console.error('Erro ao buscar resultados:', error);
-        res.status(500).json({ error: 'Erro ao buscar resultados' });
-    }
-});
-
-app.listen(PORT, () => {
-    console.log(`🌐 Servidor rodando em http://localhost:${PORT}`);
-    
-    // Iniciar sincronização automática ao iniciar o servidor
-    console.log('🚀 Iniciando sincronização automática...');
-    initializeManagers();
-    sincronizador.startAutoSync(30).catch(error => {
-        console.error('❌ Erro ao iniciar sincronização automática:', error);
-    });
-});
 // Criar objetivo
 app.post('/api/objetivos', requireAuth, async (req, res) => {
     try {
@@ -7132,32 +9415,164 @@ app.get('/api/objetivos/:id', requireAuth, async (req, res) => {
 app.put('/api/objetivos/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        const { titulo, descricao, responsavel_id, data_inicio, data_fim, status, progresso } = req.body;
+        const { titulo, descricao, responsavel_id, responsaveis_ids, data_inicio, data_fim, status, progresso } = req.body;
+        const userId = req.session.user.userId;
+        
+        console.log('🔄 Atualizando objetivo:', { id, titulo, descricao, responsavel_id, responsaveis_ids, data_inicio, data_fim, userId });
+        
         const pool = await sql.connect(dbConfig);
         
-        await pool.request()
-            .input('id', sql.Int, id)
-            .input('titulo', sql.NVarChar, titulo)
-            .input('descricao', sql.NText, descricao)
-            .input('responsavel_id', sql.Int, responsavel_id)
-            .input('data_inicio', sql.Date, data_inicio)
-            .input('data_fim', sql.Date, data_fim)
-            .input('status', sql.NVarChar, status)
-            .input('progresso', sql.Decimal(5,2), progresso)
+        // Verificar se o objetivo existe e se o usuário tem permissão para editá-lo
+        const objetivoCheck = await pool.request()
+            .input('objetivoId', sql.Int, id)
+            .input('userId', sql.Int, userId)
             .query(`
-                UPDATE Objetivos SET
-                    titulo = @titulo,
-                    descricao = @descricao,
-                    responsavel_id = @responsavel_id,
-                    data_inicio = @data_inicio,
-                    data_fim = @data_fim,
-                    status = @status,
-                    progresso = @progresso,
-                    updated_at = GETDATE()
-                WHERE Id = @id
+                SELECT criado_por, responsavel_id, status
+                FROM Objetivos 
+                WHERE Id = @objetivoId
             `);
         
-        res.json({ success: true });
+        if (objetivoCheck.recordset.length === 0) {
+            console.log('❌ Objetivo não encontrado:', id);
+            return res.status(404).json({ error: 'Objetivo não encontrado' });
+        }
+        
+        const objetivo = objetivoCheck.recordset[0];
+        console.log('📋 Objetivo encontrado:', objetivo);
+        
+        // Verificar permissões de edição
+        let canEdit = false;
+        let canEditDate = false;
+        
+        if (objetivo.criado_por === userId) {
+            // Criador pode editar tudo
+            canEdit = true;
+            canEditDate = true;
+        } else if (objetivo.responsavel_id === userId) {
+            // Responsável pode editar apenas conteúdo, não data
+            canEdit = true;
+            canEditDate = false;
+        }
+        
+        if (!canEdit) {
+            console.log('❌ Sem permissão para editar:', { canEdit, canEditDate, userId, criado_por: objetivo.criado_por, responsavel_id: objetivo.responsavel_id });
+            return res.status(403).json({ error: 'Você não tem permissão para editar este objetivo' });
+        }
+        
+        console.log('✅ Permissões OK:', { canEdit, canEditDate });
+        
+        // Construir query de atualização
+        let updateFields = [];
+        let statusChanged = false;
+        let novoStatus = null;
+        
+        if (titulo) {
+            updateFields.push('titulo = @titulo');
+        }
+        
+        if (descricao !== undefined) {
+            updateFields.push('descricao = @descricao');
+        }
+        
+        if (responsavel_id && canEdit) {
+            updateFields.push('responsavel_id = @responsavel_id');
+        }
+        
+        if (data_inicio && canEditDate) {
+            updateFields.push('data_inicio = @data_inicio');
+            
+            // Recalcular status se data de início foi alterada
+            const hoje = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            const novaDataInicioStr = data_inicio.split('T')[0]; // YYYY-MM-DD
+            
+            novoStatus = novaDataInicioStr > hoje ? 'Agendado' : 'Ativo';
+            updateFields.push('status = @novoStatus');
+            statusChanged = true;
+        }
+        
+        if (data_fim && canEditDate) {
+            updateFields.push('data_fim = @data_fim');
+        }
+        
+        if (updateFields.length === 0) {
+            return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+        }
+        
+        updateFields.push('updated_at = GETDATE()');
+        
+        const request = pool.request();
+        request.input('id', sql.Int, id);
+        
+        if (titulo) {
+            request.input('titulo', sql.NVarChar(255), titulo);
+        }
+        
+        if (descricao !== undefined) {
+            request.input('descricao', sql.Text, descricao);
+        }
+        
+        if (responsavel_id && canEdit) {
+            request.input('responsavel_id', sql.Int, responsavel_id);
+        }
+        
+        if (data_inicio && canEditDate) {
+            request.input('data_inicio', sql.Date, new Date(data_inicio));
+        }
+        
+        if (data_fim && canEditDate) {
+            request.input('data_fim', sql.Date, new Date(data_fim));
+        }
+        
+        if (statusChanged) {
+            request.input('novoStatus', sql.NVarChar(50), novoStatus);
+        }
+        
+        const query = `UPDATE Objetivos SET ${updateFields.join(', ')} WHERE Id = @id`;
+        
+        console.log('🔧 Query de atualização:', query);
+        console.log('📊 Campos a atualizar:', updateFields);
+        
+        await request.query(query);
+        
+        // Atualizar responsáveis múltiplos se fornecidos
+        if (responsaveis_ids && Array.isArray(responsaveis_ids) && responsaveis_ids.length > 0) {
+            console.log('🔄 Atualizando responsáveis múltiplos:', responsaveis_ids);
+            
+            try {
+                // Remover responsáveis existentes no ObjetivoResponsaveis
+        await pool.request()
+                    .input('objetivoId', sql.Int, id)
+                    .query('DELETE FROM ObjetivoResponsaveis WHERE objetivo_id = @objetivoId');
+                
+                // Adicionar novos responsáveis
+                for (const responsavelId of responsaveis_ids) {
+                    if (responsavelId) {
+                        await pool.request()
+                            .input('objetivoId', sql.Int, id)
+                            .input('responsavelId', sql.Int, responsavelId)
+            .query(`
+                                INSERT INTO ObjetivoResponsaveis (objetivo_id, responsavel_id, created_at) 
+                                VALUES (@objetivoId, @responsavelId, GETDATE())
+                            `);
+                    }
+                }
+                
+                // Atualizar responsável principal na tabela Objetivos (primeiro da lista para backward compatibility)
+                if (responsaveis_ids[0]) {
+                    await pool.request()
+                        .input('objid', sql.Int, id)
+                        .input('newResponsavelId', sql.Int, responsaveis_ids[0])
+                        .query('UPDATE Objetivos SET responsavel_id = @newResponsavelId WHERE Id = @objid');
+                }
+                
+                console.log('✅ Responsáveis múltiplos atualizados com sucesso');
+            } catch (error) {
+                console.log('⚠️ Erro ao atualizar responsáveis múltiplos (tabela pode não existir):', error);
+                // Não falhar a operação se a tabela não existir
+            }
+        }
+        
+        res.json({ success: true, message: 'Objetivo atualizado com sucesso' });
     } catch (error) {
         console.error('Erro ao atualizar objetivo:', error);
         res.status(500).json({ error: 'Erro ao atualizar objetivo' });
@@ -7187,14 +9602,776 @@ app.delete('/api/objetivos/:id', requireAuth, async (req, res) => {
     }
 });
 
-// Iniciar servidor
-app.listen(PORT, () => {
-    console.log(`🌐 Servidor rodando em http://localhost:${PORT}`);
+// Endpoint para dados históricos processados
+app.get('/api/historico/dados', requireAuth, async (req, res) => {
+    try {
+        console.log('📊 Processando dados históricos...');
+        
+        // Verifica se o usuário tem permissão para acessar histórico
+        const user = req.session.user;
+        const temPermissao = verificarPermissaoHistorico(user);
+        
+        if (!temPermissao) {
+            // Log de tentativa de acesso não autorizado
+            console.warn('🚨 Tentativa de acesso não autorizado ao histórico:', {
+                usuario: user?.nome || user?.email || 'Desconhecido',
+                departamento: user?.departamento || 'N/A',
+                ip: req.ip || req.connection.remoteAddress,
+                timestamp: new Date().toISOString()
+            });
+            
+            return res.status(403).json({ 
+                error: 'Acesso negado. Apenas usuários dos setores RH ou Departamento de Treinamento e Desenvolvimento podem acessar os dados históricos.',
+                code: 'HISTORICO_ACCESS_DENIED'
+            });
+        }
+        
+        // Executa o script Python para processar os arquivos Excel
+        const pythonScript = path.join(__dirname, 'scripts', 'processar_historico_excel.py');
+        
+        return new Promise((resolve, reject) => {
+            const python = spawn('python', [pythonScript], {
+                cwd: __dirname,
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+            
+            let stdout = '';
+            let stderr = '';
+            
+            python.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+            
+            python.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+            
+            python.on('close', (code) => {
+                if (code === 0) {
+                    console.log('✅ Dados históricos processados com sucesso');
+                    
+                    // Tenta carregar o cache gerado pelo Python
+                    const cacheFile = path.join(__dirname, 'public', 'historico_feedz', 'cache_dados_historico.json');
+                    
+                    try {
+                        const fs = require('fs');
+                        if (fs.existsSync(cacheFile)) {
+                            const dados = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                            res.json({
+                                success: true,
+                                dados: dados,
+                                timestamp: new Date().toISOString(),
+                                processado_por: 'python'
+                            });
+                        } else {
+                            // Fallback: retorna dados simulados
+                            res.json({
+                                success: true,
+                                dados: gerarDadosSimulados(),
+                                timestamp: new Date().toISOString(),
+                                processado_por: 'fallback'
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Erro ao carregar cache:', error);
+                        res.json({
+                            success: true,
+                            dados: gerarDadosSimulados(),
+                            timestamp: new Date().toISOString(),
+                            processado_por: 'fallback'
+                        });
+                    }
+                    
+                    resolve();
+                } else {
+                    console.error('❌ Erro ao processar dados históricos:', stderr);
+                    res.status(500).json({
+                        error: 'Erro ao processar dados históricos',
+                        details: stderr
+                    });
+                    reject(new Error(stderr));
+                }
+            });
+            
+            python.on('error', (error) => {
+                console.error('❌ Erro ao executar script Python:', error);
+                res.status(500).json({
+                    error: 'Erro ao executar processamento',
+                    details: error.message
+                });
+                reject(error);
+            });
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro no endpoint de histórico:', error);
+        res.status(500).json({
+            error: 'Erro interno do servidor',
+            details: error.message
+        });
+    }
+});
+
+// Função para verificar permissão de histórico
+// Setores com acesso: RH, DEPARTAMENTO TREINAM&DESENVOLV, COORDENACAO ADM/RH/SESMT MAO, DEPARTAMENTO ADM/RH/SESMT
+function verificarPermissaoHistorico(usuario) {
+    if (!usuario) return false;
     
-    // Iniciar sincronização automática
-    console.log('🚀 Iniciando sincronização automática...');
-    initializeManagers();
-    sincronizador.startAutoSync(30).catch(error => {
-        console.error('❌ Erro ao iniciar sincronização automática:', error);
-    });
+    const setoresPermitidos = [
+        'RH', 
+        'DEPARTAMENTO TREINAM&DESENVOLV',
+        'COORDENACAO ADM/RH/SESMT MAO',
+        'DEPARTAMENTO ADM/RH/SESMT'
+    ];
+    
+    // Verifica se o departamento/setor do usuário está na lista permitida
+    if (usuario.departamento) {
+        const departamentoUsuario = usuario.departamento.toUpperCase().trim();
+        
+        // Verifica correspondência exata ou parcial para variações do nome
+        for (let setor of setoresPermitidos) {
+            if (departamentoUsuario === setor || 
+                (departamentoUsuario.includes('TREINAM') && departamentoUsuario.includes('DESENVOLV')) ||
+                departamentoUsuario === 'RH' ||
+                departamentoUsuario === 'RECURSOS HUMANOS' ||
+                departamentoUsuario.includes('COORDENACAO ADM') ||
+                (departamentoUsuario.includes('COORDENACAO') && departamentoUsuario.includes('SESMT')) ||
+                (departamentoUsuario.includes('DEPARTAMENTO ADM') && departamentoUsuario.includes('SESMT')) ||
+                (departamentoUsuario.startsWith('DEPARTAMENTO ADM/RH'))) {
+                return true;
+            }
+        }
+    }
+    
+    // Verifica por permissões específicas
+    if (usuario.permissoes && Array.isArray(usuario.permissoes)) {
+        return usuario.permissoes.includes('rh') || 
+               usuario.permissoes.includes('treinamento') ||
+               usuario.permissoes.includes('historico');
+    }
+    
+    // Para desenvolvimento: permitir acesso se for admin
+    if (usuario.role === 'Administrador' || usuario.is_admin) {
+        return true;
+    }
+    
+    return false;
+}
+
+// ================================================================
+// ROTAS DE AVALIAÇÕES
+// ================================================================
+
+/**
+ * Verifica permissões de avaliações
+ * RH, T&D e DEPARTAMENTO ADM/RH/SESMT podem ver todas as avaliações
+ */
+function verificarPermissaoAvaliacoesAdmin(usuario) {
+    if (!usuario) return false;
+    
+    const departamento = usuario.departamento ? usuario.departamento.toUpperCase().trim() : '';
+    
+    const isHR = departamento.includes('RH') || departamento.includes('RECURSOS HUMANOS');
+    const isTD = departamento.includes('DEPARTAMENTO TREINAM&DESENVOLV') || 
+                 departamento.includes('TREINAMENTO') || 
+                 departamento.includes('DESENVOLVIMENTO') ||
+                 departamento.includes('T&D');
+    const isDeptAdm = (departamento.includes('DEPARTAMENTO ADM') && departamento.includes('SESMT')) ||
+                      (departamento.startsWith('DEPARTAMENTO ADM/RH'));
+    const isAdmin = usuario.role === 'Administrador' || usuario.is_admin;
+    
+    return isAdmin || isHR || isTD || isDeptAdm;
+}
+
+// Listar avaliações do usuário
+app.get('/api/avaliacoes/minhas', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const pool = await sql.connect(dbConfig);
+        
+        // Buscar avaliações do usuário
+        const temPermissaoAdmin = verificarPermissaoAvaliacoesAdmin(user);
+        const avaliacoes = await AvaliacoesManager.buscarAvaliacoesUsuario(pool, user.userId, temPermissaoAdmin);
+        
+        res.json(avaliacoes);
+        
+    } catch (error) {
+        console.error('Erro ao buscar avaliações:', error);
+        res.status(500).json({ error: 'Erro ao buscar avaliações' });
+    }
+});
+
+// Buscar todas as avaliações (apenas para RH, T&D e DEPARTAMENTO ADM/RH/SESMT)
+app.get('/api/avaliacoes/todas', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        
+        // Verificar permissão
+        if (!verificarPermissaoAvaliacoesAdmin(user)) {
+            return res.status(403).json({ 
+                error: 'Acesso negado. Apenas RH, T&D e DEPARTAMENTO ADM/RH/SESMT podem visualizar todas as avaliações.' 
+            });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Buscar todas as avaliações
+        const result = await pool.request().query(`
+            SELECT 
+                a.Id,
+                a.UserId,
+                a.GestorId,
+                a.Matricula,
+                a.DataAdmissao,
+                a.DataCriacao,
+                a.DataLimiteResposta,
+                a.StatusAvaliacao,
+                a.RespostaColaboradorConcluida,
+                a.RespostaGestorConcluida,
+                a.DataRespostaColaborador,
+                a.DataRespostaGestor,
+                t.Nome as TipoAvaliacao,
+                u.NomeCompleto,
+                u.Departamento,
+                u.Departamento,
+                g.NomeCompleto as NomeGestor
+            FROM Avaliacoes a
+            INNER JOIN TiposAvaliacao t ON a.TipoAvaliacaoId = t.Id
+            INNER JOIN Users u ON a.UserId = u.Id
+            LEFT JOIN Users g ON a.GestorId = g.Id
+            ORDER BY a.DataCriacao DESC
+        `);
+        
+        res.json(result.recordset);
+        
+    } catch (error) {
+        console.error('Erro ao buscar todas as avaliações:', error);
+        res.status(500).json({ error: 'Erro ao buscar todas as avaliações' });
+    }
+});
+
+// Buscar respostas de uma avaliação
+app.get('/api/avaliacoes/:id/respostas', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const { id } = req.params;
+        const pool = await sql.connect(dbConfig);
+        
+        // Buscar avaliação
+        const avaliacaoResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT * FROM Avaliacoes WHERE Id = @id');
+        
+        if (avaliacaoResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Avaliação não encontrada' });
+        }
+        
+        const avaliacao = avaliacaoResult.recordset[0];
+        
+        // Verificar permissão
+        const temPermissao = avaliacao.UserId === user.userId || 
+                            avaliacao.GestorId === user.userId ||
+                            verificarPermissaoAvaliacoesAdmin(user);
+        
+        if (!temPermissao) {
+            return res.status(403).json({ error: 'Sem permissão' });
+        }
+        
+        // Buscar perguntas específicas da avaliação (snapshot)
+        const perguntas = await AvaliacoesManager.buscarPerguntasAvaliacao(pool, id);
+        
+        // Determinar se usuário é participante ou RH/Admin
+        const eParticipante = avaliacao.UserId === user.userId || avaliacao.GestorId === user.userId;
+        
+        let minhasRespostas, respostasOutraParte;
+        
+        if (eParticipante) {
+            // Usuário é participante: minhas respostas e respostas da outra parte
+            const minhasRespostasResult = await pool.request()
+                .input('avaliacaoId', sql.Int, id)
+                .input('userId', sql.Int, user.userId)
+                .query(`
+                    SELECT * FROM RespostasAvaliacoes
+                    WHERE AvaliacaoId = @avaliacaoId
+                        AND RespondidoPor = @userId
+                    ORDER BY PerguntaId
+                `);
+            
+            const respostasOutraParteResult = await pool.request()
+                .input('avaliacaoId', sql.Int, id)
+                .input('userId', sql.Int, user.userId)
+                .query(`
+                    SELECT * FROM RespostasAvaliacoes
+                    WHERE AvaliacaoId = @avaliacaoId
+                        AND RespondidoPor != @userId
+                    ORDER BY PerguntaId
+                `);
+            
+            minhasRespostas = minhasRespostasResult.recordset;
+            respostasOutraParte = respostasOutraParteResult.recordset;
+        } else {
+            // RH/Admin: mostrar respostas do colaborador primeiro, depois do gestor
+            const respostasColaboradorResult = await pool.request()
+                .input('avaliacaoId', sql.Int, id)
+                .query(`
+                    SELECT * FROM RespostasAvaliacoes
+                    WHERE AvaliacaoId = @avaliacaoId
+                        AND TipoRespondente = 'Colaborador'
+                    ORDER BY PerguntaId
+                `);
+            
+            const respostasGestorResult = await pool.request()
+                .input('avaliacaoId', sql.Int, id)
+                .query(`
+                    SELECT * FROM RespostasAvaliacoes
+                    WHERE AvaliacaoId = @avaliacaoId
+                        AND TipoRespondente = 'Gestor'
+                    ORDER BY PerguntaId
+                `);
+            
+            minhasRespostas = respostasColaboradorResult.recordset;
+            respostasOutraParte = respostasGestorResult.recordset;
+        }
+        
+        res.json({
+            perguntas: perguntas,
+            minhasRespostas: minhasRespostas,
+            respostasOutraParte: respostasOutraParte
+        });
+        
+    } catch (error) {
+        console.error('Erro ao buscar respostas:', error);
+        res.status(500).json({ error: 'Erro ao buscar respostas' });
+    }
+});
+
+// Buscar questionário padrão
+app.get('/api/avaliacoes/questionario/:tipo', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const { tipo } = req.params; // '45' ou '90'
+        
+        if (tipo !== '45' && tipo !== '90') {
+            return res.status(400).json({ error: 'Tipo de questionário inválido' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        const questionario = await AvaliacoesManager.buscarQuestionarioPadrao(pool, tipo);
+        
+        res.json(questionario);
+        
+    } catch (error) {
+        console.error('Erro ao buscar questionário:', error);
+        res.status(500).json({ error: 'Erro ao buscar questionário' });
+    }
+});
+
+// Salvar resposta de avaliação
+app.post('/api/avaliacoes/responder', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const { avaliacaoId, respostas, tipoRespondente } = req.body;
+        
+        // Validar dados
+        if (!avaliacaoId || !respostas || !Array.isArray(respostas) || !tipoRespondente) {
+            return res.status(400).json({ error: 'Dados inválidos' });
+        }
+        
+        if (tipoRespondente !== 'Colaborador' && tipoRespondente !== 'Gestor') {
+            return res.status(400).json({ error: 'Tipo de respondente inválido' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se a avaliação existe e se o usuário tem permissão
+        const avaliacaoResult = await pool.request()
+            .input('avaliacaoId', sql.Int, avaliacaoId)
+            .query('SELECT * FROM Avaliacoes WHERE Id = @avaliacaoId');
+        
+        const avaliacao = avaliacaoResult.recordset[0];
+        if (!avaliacao) {
+            return res.status(404).json({ error: 'Avaliação não encontrada' });
+        }
+        
+        // Verificar se a avaliação está agendada (ainda não chegou no período de resposta)
+        if (avaliacao.StatusAvaliacao === 'Agendada') {
+            const dataAdmissao = new Date(avaliacao.DataAdmissao);
+            const hoje = new Date();
+            const diasDesdeAdmissao = Math.floor((hoje - dataAdmissao) / (1000 * 60 * 60 * 24));
+            const diasNecessarios = avaliacao.TipoAvaliacaoId === 1 ? 45 : 90;
+            const diasFaltantes = diasNecessarios - diasDesdeAdmissao;
+            
+            return res.status(400).json({ 
+                error: 'Esta avaliação ainda não está disponível',
+                message: `Faltam aproximadamente ${diasFaltantes} dia(s) para que você possa responder esta avaliação.`,
+                diasFaltantes: diasFaltantes
+            });
+        }
+        
+        // Verificar se a avaliação está expirada
+        const agora = new Date();
+        const dataLimite = new Date(avaliacao.DataLimiteResposta);
+        
+        if (agora > dataLimite) {
+            return res.status(400).json({ 
+                error: 'Esta avaliação está expirada',
+                message: 'O prazo para responder esta avaliação expirou. Entre em contato com o RH se necessário.',
+                dataLimite: dataLimite.toISOString()
+            });
+        }
+        
+        // Verificar se avaliação está com status Expirada
+        if (avaliacao.StatusAvaliacao === 'Expirada') {
+            return res.status(400).json({ 
+                error: 'Esta avaliação está expirada',
+                message: 'Esta avaliação foi marcada como expirada. Entre em contato com o RH se necessário.'
+            });
+        }
+        
+        // Se for colaborador, verificar se é o próprio
+        if (tipoRespondente === 'Colaborador' && avaliacao.UserId !== user.userId) {
+            return res.status(403).json({ error: 'Você não tem permissão para responder esta avaliação' });
+        }
+        
+        // Se for gestor, verificar se é gestor do usuário avaliado
+        if (tipoRespondente === 'Gestor' && avaliacao.GestorId !== user.userId) {
+            return res.status(403).json({ error: 'Você não é o gestor responsável por esta avaliação' });
+        }
+        
+        // Verificar se já respondeu
+        if (tipoRespondente === 'Colaborador' && avaliacao.RespostaColaboradorConcluida) {
+            return res.status(400).json({ error: 'Você já respondeu esta avaliação' });
+        }
+        
+        if (tipoRespondente === 'Gestor' && avaliacao.RespostaGestorConcluida) {
+            return res.status(400).json({ error: 'Você já respondeu esta avaliação' });
+        }
+        
+        // Salvar cada resposta
+        for (const resposta of respostas) {
+            await AvaliacoesManager.salvarRespostaAvaliacao(pool, {
+                avaliacaoId,
+                perguntaId: resposta.perguntaId,
+                tipoQuestionario: resposta.tipoQuestionario,
+                pergunta: resposta.pergunta,
+                tipoPergunta: resposta.tipoPergunta,
+                resposta: resposta.resposta,
+                respondidoPor: user.userId,
+                tipoRespondente,
+                opcaoSelecionadaId: resposta.opcaoSelecionadaId || null
+            });
+        }
+        
+        // Marcar avaliação como concluída
+        await AvaliacoesManager.concluirAvaliacao(pool, avaliacaoId, tipoRespondente);
+        
+        res.json({ success: true, message: 'Respostas salvas com sucesso' });
+        
+    } catch (error) {
+        console.error('Erro ao salvar respostas:', error);
+        res.status(500).json({ error: 'Erro ao salvar respostas' });
+    }
+});
+
+// Atualizar questionário padrão (apenas RH, T&D e DEPARTAMENTO ADM/RH/SESMT)
+app.put('/api/avaliacoes/questionario/:tipo', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const { tipo } = req.params;
+        const { perguntas } = req.body;
+        
+        console.log('📝 Requisição para atualizar questionário tipo:', tipo);
+        console.log('👤 Usuário:', user.nome, 'Departamento:', user.departamento);
+        console.log('📋 Perguntas recebidas:', perguntas ? perguntas.length : 0);
+        
+        // Verificar permissão
+        if (!verificarPermissaoAvaliacoesAdmin(user)) {
+            console.log('🚫 Acesso negado para usuário:', user.nome);
+            return res.status(403).json({ 
+                error: 'Acesso negado. Apenas RH, T&D e DEPARTAMENTO ADM/RH/SESMT podem editar questionários.' 
+            });
+        }
+        
+        if (tipo !== '45' && tipo !== '90') {
+            console.log('❌ Tipo inválido:', tipo);
+            return res.status(400).json({ error: 'Tipo de questionário inválido' });
+        }
+        
+        if (!perguntas || !Array.isArray(perguntas)) {
+            console.log('❌ Perguntas inválidas ou não é array');
+            return res.status(400).json({ error: 'Perguntas inválidas' });
+        }
+        
+        console.log('✅ Validações passaram, iniciando atualização...');
+        
+        const pool = await sql.connect(dbConfig);
+        const resultado = await AvaliacoesManager.atualizarQuestionarioPadrao(pool, tipo, perguntas);
+        
+        console.log('✅ Questionário atualizado com sucesso:', resultado);
+        
+        res.json({ success: true, message: 'Questionário atualizado com sucesso' });
+        
+    } catch (error) {
+        console.error('❌ Erro ao atualizar questionário:', error);
+        res.status(500).json({ error: 'Erro ao atualizar questionário: ' + error.message });
+    }
+});
+
+// Reabrir avaliação expirada (apenas RH, T&D, DEPARTAMENTO ADM/RH/SESMT)
+app.post('/api/avaliacoes/:id/reabrir', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const { id } = req.params;
+        const { novaDataLimite } = req.body;
+        
+        // Verificar permissão (apenas RH/T&D/DEPARTAMENTO ADM/RH/SESMT)
+        if (!verificarPermissaoAvaliacoesAdmin(user)) {
+            return res.status(403).json({ 
+                error: 'Acesso negado. Apenas RH, T&D e DEPARTAMENTO ADM/RH/SESMT podem reabrir avaliações.' 
+            });
+        }
+        
+        if (!novaDataLimite) {
+            return res.status(400).json({ error: 'Nova data limite é obrigatória' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Verificar se avaliação está expirada
+        const avaliacaoResult = await pool.request()
+            .input('id', sql.Int, id)
+            .query('SELECT * FROM Avaliacoes WHERE Id = @id');
+        
+        if (avaliacaoResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Avaliação não encontrada' });
+        }
+        
+        const avaliacao = avaliacaoResult.recordset[0];
+        
+        // Atualizar data limite e status
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('novaDataLimite', sql.DateTime, new Date(novaDataLimite))
+            .query(`
+                UPDATE Avaliacoes
+                SET DataLimiteResposta = @novaDataLimite,
+                    StatusAvaliacao = 'Pendente',
+                    AtualizadoEm = GETDATE()
+                WHERE Id = @id
+            `);
+        
+        console.log(`✅ Avaliação ${id} reaberta. Nova data limite: ${novaDataLimite}`);
+        
+        res.json({ success: true, message: 'Avaliação reaberta com sucesso' });
+        
+    } catch (error) {
+        console.error('Erro ao reabrir avaliação:', error);
+        res.status(500).json({ error: 'Erro ao reabrir avaliação' });
+    }
+});
+
+// Executar verificação manual de avaliações (apenas admins)
+app.post('/api/avaliacoes/verificar', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        
+        // Apenas administradores podem executar verificação manual
+        if (user.role !== 'Administrador' && !user.is_admin) {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        const resultado = await AvaliacoesManager.verificarECriarAvaliacoes(pool);
+        
+        res.json(resultado);
+        
+    } catch (error) {
+        console.error('Erro ao verificar avaliações:', error);
+        res.status(500).json({ error: 'Erro ao verificar avaliações' });
+    }
+});
+
+// Buscar avaliação específica por ID (DEVE SER A ÚLTIMA ROTA DE AVALIAÇÕES)
+app.get('/api/avaliacoes/:id', requireAuth, async (req, res) => {
+    try {
+        loadDependencies();
+        const user = req.session.user;
+        const { id } = req.params;
+        
+        // Validar que id é um número
+        if (isNaN(id) || !Number.isInteger(Number(id))) {
+            return res.status(400).json({ error: 'ID inválido' });
+        }
+        
+        const pool = await sql.connect(dbConfig);
+        
+        // Buscar avaliação
+        const result = await pool.request()
+            .input('id', sql.Int, parseInt(id))
+            .query(`
+                SELECT 
+                    a.Id,
+                    a.UserId,
+                    a.GestorId,
+                    a.Matricula,
+                    a.DataAdmissao,
+                    a.DataCriacao,
+                    a.DataLimiteResposta,
+                    a.StatusAvaliacao,
+                    a.RespostaColaboradorConcluida,
+                    a.RespostaGestorConcluida,
+                    a.DataRespostaColaborador,
+                    a.DataRespostaGestor,
+                    a.TipoAvaliacaoId,
+                    t.Nome as TipoAvaliacao,
+                    u.NomeCompleto,
+                    u.Departamento,
+                    u.Departamento,
+                    g.NomeCompleto as NomeGestor
+                FROM Avaliacoes a
+                INNER JOIN TiposAvaliacao t ON a.TipoAvaliacaoId = t.Id
+                INNER JOIN Users u ON a.UserId = u.Id
+                LEFT JOIN Users g ON a.GestorId = g.Id
+                WHERE a.Id = @id
+            `);
+        
+        if (result.recordset.length === 0) {
+            return res.status(404).json({ error: 'Avaliação não encontrada' });
+        }
+        
+        const avaliacao = result.recordset[0];
+        
+        // Verificar se usuário tem permissão para ver esta avaliação
+        const temPermissao = avaliacao.UserId === user.userId || 
+                            avaliacao.GestorId === user.userId ||
+                            verificarPermissaoAvaliacoesAdmin(user);
+        
+        if (!temPermissao) {
+            return res.status(403).json({ error: 'Você não tem permissão para visualizar esta avaliação' });
+        }
+        
+        res.json(avaliacao);
+        
+    } catch (error) {
+        console.error('Erro ao buscar avaliação:', error);
+        res.status(500).json({ error: 'Erro ao buscar avaliação' });
+    }
+});
+
+// Função para gerar dados simulados como fallback
+function gerarDadosSimulados() {
+    return {
+        avaliacao: Array.from({length: 50}, (_, i) => ({
+            id: i + 1,
+            colaborador: `Colaborador ${i + 1}`,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5],
+            avaliador: `Gestor ${Math.floor(i / 10) + 1}`,
+            nota: (Math.random() * 4 + 1).toFixed(1),
+            dataAvaliacao: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            status: Math.random() > 0.2 ? 'Concluída' : 'Pendente',
+            observacoes: 'Avaliação de desempenho trimestral'
+        })),
+        feedback: Array.from({length: 100}, (_, i) => ({
+            id: i + 1,
+            remetente: `Colaborador ${Math.floor(Math.random() * 30) + 1}`,
+            destinatario: `Colaborador ${Math.floor(Math.random() * 30) + 1}`,
+            tipo: ['Positivo', 'Desenvolvimento', 'Sugestão', 'Outros'][Math.floor(Math.random() * 4)],
+            categoria: ['Técnico', 'Atendimento', 'Vendas', 'Design', 'Liderança'][Math.floor(Math.random() * 5)],
+            mensagem: `Feedback de exemplo ${i + 1}`,
+            dataEnvio: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            visualizado: Math.random() > 0.3,
+            util: Math.random() > 0.4
+        })),
+        humor: Array.from({length: 200}, (_, i) => ({
+            id: i + 1,
+            colaborador: `Colaborador ${Math.floor(Math.random() * 30) + 1}`,
+            humor: ['Muito Triste', 'Triste', 'Neutro', 'Feliz', 'Muito Feliz'][Math.floor(Math.random() * 5)],
+            pontuacao: Math.floor(Math.random() * 5) + 1,
+            dataRegistro: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            descricao: Math.random() > 0.5 ? 'Descrição do humor' : null
+        })),
+        colaboradores: Array.from({length: 80}, (_, i) => ({
+            id: i + 1,
+            nome: `Colaborador ${i + 1}`,
+            email: `colaborador${i + 1}@empresa.com`,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5],
+            cargo: ['Analista', 'Gerente', 'Coordenador', 'Supervisor', 'Assistente'][Math.floor(Math.random() * 5)],
+            dataAdmissao: new Date(2020 + Math.floor(Math.random() * 4), Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            status: ['Ativo', 'Inativo', 'Férias', 'Licença'][Math.floor(Math.random() * 4)],
+            salario: (Math.random() * 10000 + 2000).toFixed(2)
+        })),
+        medias: Array.from({length: 20}, (_, i) => ({
+            id: i + 1,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5],
+            mediaGeral: (Math.random() * 2 + 3).toFixed(1),
+            totalFeedbacks: Math.floor(Math.random() * 50) + 10,
+            periodo: '2024',
+            tendencia: Math.random() > 0.5 ? 'Positiva' : 'Negativa'
+        })),
+        ranking: Array.from({length: 30}, (_, i) => ({
+            posicao: i + 1,
+            colaborador: `Colaborador ${i + 1}`,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5],
+            pontos: Math.floor(Math.random() * 1000) + 100,
+            lumicoins: Math.floor(Math.random() * 500) + 50,
+            atividades: Math.floor(Math.random() * 100) + 10
+        })),
+        turnover: Array.from({length: 15}, (_, i) => ({
+            id: i + 1,
+            colaborador: `Colaborador ${i + 1}`,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5],
+            dataSaida: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            motivo: ['Demissão', 'Pedido de demissão', 'Aposentadoria', 'Término de contrato'][Math.floor(Math.random() * 4)],
+            tempoEmpresa: Math.floor(Math.random() * 60) + 1 + ' meses'
+        })),
+        pdi: Array.from({length: 40}, (_, i) => ({
+            id: i + 1,
+            colaborador: `Colaborador ${i + 1}`,
+            objetivo: `Objetivo de desenvolvimento ${i + 1}`,
+            status: ['Ativo', 'Concluído', 'Pausado', 'Cancelado'][Math.floor(Math.random() * 4)],
+            dataInicio: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            dataFim: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            progresso: Math.floor(Math.random() * 100) + 1,
+            responsavel: `Gestor ${Math.floor(Math.random() * 10) + 1}`
+        })),
+        pesquisas: Array.from({length: 25}, (_, i) => ({
+            id: i + 1,
+            titulo: `Pesquisa ${i + 1}`,
+            tipo: ['Múltipla Escolha', 'Escala', 'Texto Livre'][Math.floor(Math.random() * 3)],
+            status: ['Ativa', 'Concluída', 'Pausada'][Math.floor(Math.random() * 3)],
+            dataInicio: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            dataFim: new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toLocaleDateString('pt-BR'),
+            totalRespostas: Math.floor(Math.random() * 100) + 10,
+            departamento: ['RH', 'TI', 'Vendas', 'Financeiro', 'Operações'][i % 5]
+        }))
+    };
+}
+
+// Iniciar servidor
+app.listen(PORT, async () => {
+    try {
+        // Iniciar sincronização automática
+        console.log('🚀 Iniciando sincronização automática...');
+        console.log('🔐 Sincronização configurada para NÃO sobrescrever PasswordHash');
+        initializeManagers();
+        
+        await sincronizador.startAutoSync(30);
+        
+        console.log(`🚀 Servidor rodando na porta ${PORT}`);
+        console.log(`📱 Acesse: http://localhost:${PORT}`);
+        
+        // Verificar estrutura da tabela Users
+        console.log('🔍 Verificando estrutura da tabela Users...');
+        await verificarEstruturaTabelaUsers();
+        
+    } catch (error) {
+        console.error('❌ Erro ao inicializar servidor:', error);
+    }
 });

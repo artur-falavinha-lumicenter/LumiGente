@@ -1,339 +1,290 @@
-# 🚀 Sistema Feedz - Lumicenter Lighting
+# LumiGente - Sistema de Feedback e Gestão de Pessoas
 
-Sistema completo de gestão de feedbacks, reconhecimentos e avaliações para a Lumicenter Lighting.
+![LumiGente Logo](https://img.shields.io/badge/LumiGente-Feedback%20Hub-blue?style=for-the-badge)
 
 ## 📋 Visão Geral
 
-O Sistema Feedz é uma plataforma moderna e intuitiva que permite:
+O **LumiGente** é um sistema completo de gestão de feedback e pessoas desenvolvido para a Lumicenter. O sistema oferece uma plataforma integrada para gerenciamento de feedbacks, avaliações de desempenho, pesquisas organizacionais, reconhecimentos e análise de dados de RH.
 
-- **Feedbacks construtivos** entre colaboradores
-- **Reconhecimentos** com badges personalizados
-- **Gestão de humor** diário da equipe
-- **Acompanhamento de objetivos** com check-ins
-- **Pesquisas rápidas** para engajamento
-- **Gamificação** com sistema Lumicoin
-- **Dashboard gerencial** para gestores
-- **Analytics avançados** e relatórios
+### 🎯 Principais Funcionalidades
 
-## 🎯 Funcionalidades Principais
+- **Dashboard Interativo**: Visão consolidada de métricas e indicadores
+- **Sistema de Feedbacks**: Envio e recebimento de feedbacks entre colaboradores
+- **Reconhecimentos**: Sistema de reconhecimento e gamificação
+- **Gestão de Equipes**: Visualização hierárquica da organização
+- **Relatórios e Analytics**: Análises detalhadas de desempenho e engajamento
+- **Humor do Dia**: Monitoramento do clima organizacional
+- **Gestão de Objetivos**: Acompanhamento de metas e resultados
+- **Pesquisas Organizacionais**: Criação e gestão de pesquisas internas
+- **Avaliações Periódicas**: Sistema de avaliações de 45 e 90 dias
+- **Histórico Completo**: Rastreamento de todas as atividades
 
-### Para Usuários Comuns
-- Dashboard personalizado com métricas
-- Envio e recebimento de feedbacks
-- Sistema de reconhecimentos
-- Registro de humor diário
-- Acompanhamento de objetivos
-- Participação em pesquisas
-- Gamificação com pontos e ranking
+## 🏗️ Arquitetura do Sistema
 
-### Para Gestores
-- Dashboard gerencial avançado
-- Gestão de humor da equipe
-- Analytics e relatórios
-- Gestão de equipe
-- Criação de pesquisas
-- Acompanhamento de objetivos da equipe
+### Stack Tecnológica
 
-## 🛠️ Tecnologias Utilizadas
+- **Backend**: Node.js + Express.js
+- **Frontend**: HTML5, CSS3, JavaScript (Vanilla)
+- **Banco de Dados**: Microsoft SQL Server
+- **Autenticação**: Express Session + bcrypt
+- **Processamento de Dados**: Python (scripts auxiliares)
+- **Relatórios**: Excel.js para exportação
 
-- **Backend**: Node.js + Express
-- **Banco de Dados**: SQL Server
-- **Frontend**: HTML5 + CSS3 + JavaScript
-- **Autenticação**: Express Session
-- **UI Framework**: Font Awesome + CSS Custom
+### Estrutura do Projeto
 
-## 📦 Instalação
+```
+LumiGente-main/
+├── 📁 public/                    # Frontend (arquivos estáticos)
+│   ├── 📄 index.html            # Dashboard principal
+│   ├── 📄 login.html            # Página de login
+│   ├── 📄 autoavaliacao.html    # Sistema de autoavaliação
+│   ├── 📄 avaliacao-gestor.html # Avaliação de gestores
+│   ├── 📁 js/                   # Scripts JavaScript
+│   ├── 📁 styles/               # Folhas de estilo CSS
+│   └── 📁 historico_feedz/      # Dados históricos e relatórios
+├── 📁 routes/                   # Rotas da API
+├── 📁 utils/                    # Utilitários e managers
+│   ├── 📄 hierarchyManager.js   # Gerenciamento de hierarquia
+│   └── 📄 analyticsManager.js   # Análises e métricas
+├── 📁 scripts/                  # Scripts Python auxiliares
+├── 📄 server.js                 # Servidor principal
+├── 📄 config.env               # Configurações do sistema
+└── 📄 package.json             # Dependências Node.js
+```
+
+## 🚀 Instalação e Configuração
 
 ### Pré-requisitos
 
-1. **Node.js** (versão 14 ou superior)
-2. **SQL Server** com acesso ao banco `LUMICENTER_FEEDBACKS`
-3. **Python** (para executar scripts de banco)
-4. **pyodbc** (para conexão com SQL Server)
+- **Node.js** (versão 16 ou superior)
+- **Python** (versão 3.8 ou superior)
+- **SQL Server** (2017 ou superior)
+- **ODBC Driver 17 for SQL Server**
 
 ### Passo a Passo
 
-#### 1. Clone o repositório
-```bash
-git clone <url-do-repositorio>
-cd Feedz
-```
+1. **Clone o repositório**
+   ```bash
+   git clone https://github.com/lumicenter/feedz-hierarchy.git
+   cd LumiGente-main
+   ```
 
-#### 2. Instale as dependências
-```bash
-npm install
-```
+2. **Instale as dependências Node.js**
+   ```bash
+   npm install
+   ```
 
-#### 3. Configure o banco de dados
+3. **Configure o banco de dados**
+   - Edite o arquivo `config.env` com suas credenciais
+   - Execute o script de configuração:
+   ```bash
+   python scripts/setup_avaliacoes_db.py
+   ```
 
-Execute o script Python para criar a estrutura do banco:
+4. **Configure as variáveis de ambiente**
+   ```bash
+   # Copie e edite o arquivo de configuração
+   cp config.env .env
+   ```
 
-```bash
-cd step-by-step
-python executar_banco.py
-```
+5. **Inicie o servidor**
+   ```bash
+   # Desenvolvimento
+   npm run dev
+   
+   # Produção
+   npm start
+   ```
 
-#### 4. Configure as variáveis de ambiente
+## ⚙️ Configuração
 
-Crie um arquivo `.env` na raiz do projeto baseado no `.env.example`:
-
-```bash
-cp .env.example .env
-```
-
-Edite o arquivo `.env` com suas credenciais reais:
+### Variáveis de Ambiente Principais
 
 ```env
-DB_USER=seu_usuario_db
-DB_PASSWORD=sua_senha_db
-DB_SERVER=seu_servidor\\instancia
-DB_NAME=nome_do_banco
-API_URL=http://seu-servidor:porta/api/Login
+# Servidor
 PORT=3000
-```
-
-#### 5. Inicie o servidor
-```bash
-npm start
-```
-
-O sistema estará disponível em: http://localhost:3000
-
-## 🗄️ Estrutura do Banco de Dados
-
-### Tabelas Principais
-- **Users** - Usuários do sistema
-- **Roles** - Perfis de acesso
-- **Feedbacks** - Sistema de feedbacks
-- **Recognitions** - Reconhecimentos
-- **DailyMood** - Humor do dia
-- **Objetivos** - Gestão de objetivos
-- **PesquisasRapidas** - Pesquisas rápidas
-- **Gamification** - Sistema de gamificação
-
-### Tabelas de Suporte
-- **FeedbackReactions** - Reações aos feedbacks
-- **FeedbackReplies** - Respostas aos feedbacks
-- **ObjetivoCheckins** - Check-ins de objetivos
-- **UserPoints** - Pontos dos usuários
-- **UserRankings** - Rankings mensais
-
-## 🔧 APIs Disponíveis
-
-### Autenticação
-- `POST /api/login` - Login de usuário
-- `GET /api/usuario` - Dados do usuário logado
-- `POST /api/logout` - Logout
-
-### Feedbacks
-- `GET /api/feedbacks/received` - Feedbacks recebidos
-- `GET /api/feedbacks/sent` - Feedbacks enviados
-- `POST /api/feedbacks` - Criar feedback
-- `POST /api/feedbacks/:id/react` - Reagir ao feedback
-
-### Reconhecimentos
-- `GET /api/recognitions` - Reconhecimentos recebidos
-- `POST /api/recognitions` - Criar reconhecimento
-
-### Humor
-- `POST /api/humor` - Registrar humor
-- `GET /api/humor` - Buscar humor do usuário
-- `GET /api/humor/metrics` - Métricas de humor
-
-### Objetivos
-- `POST /api/objetivos` - Criar objetivo
-- `GET /api/objetivos` - Listar objetivos
-- `POST /api/objetivos/:id/checkin` - Registrar check-in
-
-### Gamificação
-- `GET /api/gamification/points` - Pontos do usuário
-- `GET /api/gamification/ranking` - Ranking mensal
-
-### Gerencial (apenas gestores)
-- `GET /api/manager/dashboard` - Dashboard gerencial
-- `GET /api/manager/analytics` - Analytics avançados
-
-## 🎨 Design System
-
-### Cores Principais
-- **Primária**: #0d556d (Azul Lumicenter)
-- **Secundária**: #f59e0b (Âmbar)
-- **Sucesso**: #10b981 (Verde)
-- **Erro**: #ef4444 (Vermelho)
-
-### Componentes
-- Cards com sombras suaves
-- Botões com gradientes
-- Modais responsivos
-- Sidebar fixa
-- Grid layouts flexíveis
-
-## 🔐 Segurança
-
-- Autenticação via API externa
-- Sessões seguras com Express Session
-- Validação de dados de entrada
-- Controle de acesso por roles
-- Sanitização de inputs
-
-## 📱 Responsividade
-
-- Design mobile-first
-- Breakpoints: 768px, 1024px
-- Sidebar colapsável em mobile
-- Grids adaptativos
-- Modais responsivos
-
-## 🚀 Funcionalidades Avançadas
-
-### Sistema de Gamificação
-- **Lumicoin** como moeda virtual
-- **Pontuação automática** por ações:
-  - Enviar Feedback: 150 Lumicoin
-  - Enviar Reconhecimento: 100-500 Lumicoin
-  - Responder pesquisa: 500 Lumicoin
-  - Acesso diário: 250 Lumicoin
-- **Ranking mensal** dos usuários
-- **Desafios mensais** com recompensas
-
-### Analytics para Gestores
-- **E-NPS** (Employee Net Promoter Score)
-- **Volume de atividades** por período
-- **Tendências** de humor e engajamento
-- **Performance** individual e da equipe
-
-## 📊 Métricas Disponíveis
-
-### Para Usuários
-- Feedbacks recebidos/enviados
-- Reconhecimentos dados/recebidos
-- Pontuação média dos feedbacks
-- Progresso de objetivos
-- Ranking de gamificação
-
-### Para Gestores
-- E-NPS da equipe
-- Volume de atividades
-- Humor médio da equipe
-- Performance individual
-- Engajamento geral
-
-## 🛠️ Desenvolvimento
-
-### Estrutura de Arquivos
-```
-Feedz/
-├── server.js                 # Servidor principal
-├── package.json             # Dependências
-├── public/                  # Arquivos estáticos
-│   ├── index.html          # Dashboard principal
-│   └── login.html          # Página de login
-└── step-by-step/           # Documentação
-    ├── PLANO_IMPLEMENTACAO_COMPLETA.md
-    ├── ESTRUTURA_BANCO_COMPLETA.sql
-    ├── FUNCIONALIDADES_IMPLEMENTADAS.md
-    └── executar_banco.py
-```
-
-### Comandos Úteis
-
-```bash
-# Iniciar servidor em modo desenvolvimento
-npm run dev
-
-# Iniciar servidor em produção
-npm start
-
-# Executar testes (futuro)
-npm test
-
-# Verificar sintaxe
-npm run lint
-```
-
-## 🔧 Configuração de Ambiente
-
-### Desenvolvimento
-```bash
 NODE_ENV=development
-PORT=3000
-DEBUG=true
+
+# Banco de Dados
+DB_SERVER=seu_servidor\\instancia
+DB_NAME=LUMICENTER_FEEDBACKS
+DB_USER=seu_usuario
+DB_PASSWORD=sua_senha
+
+# Segurança
+SESSION_SECRET=sua_chave_secreta
+BCRYPT_SALT_ROUNDS=12
+
+# Funcionalidades
+SYNC_INTERVAL=300000
+HIERARCHY_CACHE_TTL=3600000
 ```
 
-### Produção
+## 📊 Funcionalidades Detalhadas
+
+### 1. Dashboard
+- Métricas em tempo real de feedbacks
+- Indicadores de desempenho da equipe
+- Gráficos de tendências e análises
+- Notificações e alertas
+
+### 2. Sistema de Feedbacks
+- Envio de feedbacks estruturados
+- Chat de feedback em tempo real
+- Categorização por tipos (positivo, construtivo, reconhecimento)
+- Histórico completo de interações
+
+### 3. Avaliações Periódicas
+- Avaliações de 45 e 90 dias automatizadas
+- Autoavaliação e avaliação por gestores
+- Acompanhamento de progresso
+- Relatórios de desempenho
+
+### 4. Gestão Hierárquica
+- Visualização da estrutura organizacional
+- Gerenciamento de subordinados
+- Delegação de responsabilidades
+- Controle de acesso por nível
+
+### 5. Analytics e Relatórios
+- Relatórios de desempenho individual e por equipe
+- Análise de clima organizacional
+- Métricas de engajamento
+- Exportação para Excel
+
+## 🔒 Segurança
+
+O sistema implementa múltiplas camadas de segurança:
+
+- **Autenticação**: Sistema de sessões seguras
+- **Criptografia**: Senhas criptografadas com bcrypt
+- **Validação**: Validação rigorosa de dados de entrada
+- **CORS**: Configuração adequada para requisições cross-origin
+- **Rate Limiting**: Proteção contra ataques de força bruta
+- **Sanitização**: Prevenção contra XSS e SQL Injection
+
+## 🧪 Testes
+
 ```bash
-NODE_ENV=production
-PORT=3000
-DEBUG=false
+# Executar todos os testes
+npm run test:all
+
+# Testes específicos
+npm run test:hierarchy
+npm run test:cadastro
+npm run test:csrf
+
+# Testes com cobertura
+npm run test:coverage
 ```
 
-## 📈 Performance
+## 📚 Monitoramento de Documentação
 
-### Otimizações Implementadas
-- Índices otimizados no banco de dados
-- Queries otimizadas com JOINs
-- Paginação de resultados
-- Cache de consultas frequentes
-- Compressão de respostas
+O sistema inclui ferramentas automatizadas para manter a documentação sempre atualizada:
 
-### Monitoramento
-- Logs de erro detalhados
-- Métricas de performance
-- Monitoramento de sessões
-- Alertas de sistema
+```bash
+# Analisar mudanças no código
+npm run analyze:doc-changes
+
+# Verificar documentação da API
+npm run check:api-docs
+
+# Verificar documentação do banco
+npm run check:db-docs
+
+# Atualizar documentação completa
+npm run update:docs
+```
+
+### Sistema de Monitoramento
+
+O LumiGente implementa um sistema robusto de monitoramento de documentação que:
+
+- **Detecta automaticamente** mudanças no código que afetam a documentação
+- **Verifica consistência** entre código e documentação
+- **Sugere atualizações** necessárias na documentação
+- **Mantém qualidade** da documentação técnica
+
+Para mais detalhes, consulte a [Documentação de Monitoramento](docs/DOCUMENTATION_MONITORING.md).
+
+## 📈 Monitoramento
+
+O sistema inclui:
+
+- **Health Checks**: Verificação automática de saúde do sistema
+- **Métricas**: Coleta de métricas de performance
+- **Logs**: Sistema de logging estruturado
+- **Backup**: Backup automático de dados críticos
 
 ## 🚀 Deploy
 
-### Requisitos de Produção
-- Node.js 14+
-- SQL Server 2016+
-- 2GB RAM mínimo
-- 10GB espaço em disco
+### Ambiente de Produção
 
-### Passos para Deploy
-1. Configurar variáveis de ambiente
-2. Executar migrações do banco
-3. Configurar proxy reverso (nginx/apache)
-4. Configurar SSL/HTTPS
-5. Configurar backup automático
+1. **Configure as variáveis de produção**
+   ```env
+   NODE_ENV=production
+   PORT=8080
+   SESSION_COOKIE_SECURE=true
+   CORS_ORIGIN=https://feedz.lumicenter.com.br
+   ```
+
+2. **Execute o build**
+   ```bash
+   npm run build
+   ```
+
+3. **Inicie o serviço**
+   ```bash
+   npm start
+   ```
+
+### Docker (Opcional)
+
+```dockerfile
+FROM node:16-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+```
 
 ## 🤝 Contribuição
 
-### Como Contribuir
-1. Fork o projeto
-2. Crie uma branch para sua feature
-3. Commit suas mudanças
-4. Push para a branch
+1. Faça um fork do projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
 5. Abra um Pull Request
 
-### Padrões de Código
-- Use ESLint para linting
-- Siga o padrão de commits convencionais
-- Documente novas funcionalidades
-- Adicione testes para novas features
+## 📝 Changelog
+
+### Versão 1.0.0
+- Sistema completo de feedback implementado
+- Dashboard interativo
+- Sistema de avaliações periódicas
+- Gestão hierárquica
+- Relatórios e analytics
 
 ## 📞 Suporte
 
-### Contato
-- **Email**: suporte@lumicenter.com.br
-- **Telefone**: (11) 1234-5678
-- **Documentação**: [Link para documentação completa]
+Para suporte técnico, entre em contato:
 
-### Problemas Conhecidos
-- [Lista de problemas conhecidos e soluções]
+- **Email**: suporte@lumicenter.com.br
+- **Documentação**: [Wiki do Projeto](https://github.com/lumicenter/feedz-hierarchy/wiki)
+- **Issues**: [GitHub Issues](https://github.com/lumicenter/feedz-hierarchy/issues)
 
 ## 📄 Licença
 
-Este projeto é propriedade da Lumicenter Lighting e está sob licença interna.
-
-## 🎉 Agradecimentos
-
-- Equipe de desenvolvimento
-- Usuários beta testers
-- Stakeholders do projeto
+Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
 ---
 
-**Versão**: 1.0.0  
-**Última atualização**: Janeiro 2025  
-**Status**: Em produção
+**Desenvolvido com ❤️ pela equipe Lumicenter**
+
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat&logo=nodedotjs&logoColor=white)
+![Express.js](https://img.shields.io/badge/Express.js-000000?style=flat&logo=express&logoColor=white)
+![SQL Server](https://img.shields.io/badge/SQL%20Server-CC2927?style=flat&logo=microsoft-sql-server&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black)
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)

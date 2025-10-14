@@ -17,16 +17,23 @@
     "test:erro-500": "node tests/test_erro_500.js",
     "test:registro-final": "node tests/test_registro_final.js",
     "test:all": "npm run test && npm run test:hierarchy && npm run test:cadastro && npm run test:cpf-bug && npm run test:cpf-format && npm run test:erro-500 && npm run test:registro-final",
-    "db:setup": "node scripts/setup-db.js"
+    "db:setup": "node scripts/setup-db.js",
+    "analyze:doc-changes": "node scripts/analyze-doc-changes.js",
+    "check:api-docs": "node scripts/check-api-docs.js",
+    "check:db-docs": "node scripts/check-db-docs.js",
+    "update:docs": "node scripts/update-docs.js"
   },
   "dependencies": {
     "axios": "^1.11.0",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "mssql": "^11.0.1",
+    "node-fetch": "^3.3.2",
+    "node-schedule": "^2.1.1",
     "pandas": "^0.0.3",
     "validator": "^13.11.0"
   },

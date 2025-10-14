@@ -3,45 +3,360 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Responder Pesquisa - Lumicenter Feedback</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="styles/responder-pesquisa.css">
+    <title>Responder Pesquisa - LumiGente</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0d556d 0%, #0a4555 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(circle at 20% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255, 255, 255, 0.08) 0%, transparent 50%);
+            z-index: 0;
+        }
+
+        .response-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            max-width: 700px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            z-index: 10;
+            position: relative;
+        }
+
+        .response-header {
+            background: linear-gradient(180deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+            position: relative;
+        }
+
+        .response-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .response-header h1 {
+            margin: 0 0 8px 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .response-header p {
+            margin: 0;
+            opacity: 0.9;
+            font-size: 14px;
+            color: #d1cfcb;
+        }
+
+        .response-body {
+            padding: 32px;
+        }
+
+        .survey-description {
+            background: #f8fafc;
+            border-left: 4px solid #0d556d;
+            padding: 16px;
+            margin-bottom: 24px;
+            border-radius: 0 8px 8px 0;
+            color: #374151;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .question-group {
+            margin-bottom: 32px;
+            padding: 24px;
+            background: #fafbfc;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .question-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            line-height: 1.5;
+        }
+
+        .question-number {
+            background: #0d556d;
+            color: white;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .question-text {
+            flex: 1;
+        }
+
+        .question-required {
+            color: #dc2626;
+            font-size: 14px;
+            margin-left: 4px;
+        }
+
+        .question-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .question-input:focus {
+            outline: none;
+            border-color: #0d556d;
+            box-shadow: 0 0 0 3px rgba(13, 85, 109, 0.1);
+        }
+
+        textarea.question-input {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .radio-group, .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .radio-option, .checkbox-option {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: white;
+            position: relative;
+        }
+
+        .radio-option:hover, .checkbox-option:hover {
+            border-color: #0d556d;
+            background: #f0f9ff;
+        }
+
+        .radio-option.selected, .checkbox-option.selected {
+            border-color: #0d556d;
+            background: #f0f9ff;
+            box-shadow: 0 0 0 1px #0d556d;
+        }
+
+        .radio-option input[type="radio"], .checkbox-option input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin: 0;
+            accent-color: #0d556d;
+        }
+
+        .radio-option label, .checkbox-option label {
+            margin: 0;
+            cursor: pointer;
+            font-size: 14px;
+            color: #374151;
+            flex: 1;
+            user-select: none;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-primary {
+            background: linear-gradient(180deg, #0d556d 0%, #0a4555 100%);
+            color: white;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(13, 85, 109, 0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px 40px;
+            color: #6b7280;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #0d556d;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #dc2626;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .success {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #16a34a;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .success i {
+            font-size: 32px;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .response-container {
+                max-height: 90vh;
+            }
+            
+            .response-body {
+                padding: 20px;
+            }
+            
+            .form-actions {
+                flex-direction: column;
+            }
+            
+            .btn {
+                justify-content: center;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1><i class="fas fa-clipboard-list"></i> Responder Pesquisa</h1>
+    <div class="response-container">
+        <div class="response-header">
+            <h1 id="survey-title">Carregando...</h1>
+            <p id="survey-status">Preparando formulário de resposta</p>
         </div>
-
-        <div class="content">
-            <div class="loading" id="loading">
+        
+        <div class="response-body">
+            <div id="loading" class="loading">
                 <div class="spinner"></div>
                 <p>Carregando pesquisa...</p>
             </div>
-
-            <div class="error-message" id="errorMessage"></div>
-            <div class="success-message" id="successMessage"></div>
-
-            <div id="pesquisaContent" style="display: none;">
-                <div class="pesquisa-info" id="pesquisaInfo">
-                    <!-- Informações da pesquisa -->
-                </div>
-
-                <form id="formResposta">
-                    <div id="perguntasContainer">
-                        <!-- Perguntas serão carregadas aqui -->
-                    </div>
-
-                    <div class="actions">
+            
+            <div id="survey-content" style="display: none;">
+                <div id="survey-description" class="survey-description" style="display: none;"></div>
+                
+                <form id="response-form">
+                    <div id="questions-container"></div>
+                    
+                    <div class="form-actions">
                         <button type="button" class="btn btn-secondary" onclick="window.close()">
-                            <i class="fas fa-times"></i> Cancelar
+                            <i class="fas fa-times"></i>
+                            Cancelar
                         </button>
                         <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-paper-plane"></i> Enviar Respostas
+                            <i class="fas fa-paper-plane"></i>
+                            Enviar Respostas
                         </button>
                     </div>
                 </form>
             </div>
+            
+            <div id="error-message" class="error" style="display: none;"></div>
+            <div id="success-message" class="success" style="display: none;"></div>
         </div>
     </div>
 

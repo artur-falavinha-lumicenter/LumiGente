@@ -7,6 +7,7 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="styles/index.css">
     <link rel="stylesheet" href="styles/feedback-chat.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="js/feedback-chat.js"></script>
 </head>
 <body>
@@ -52,7 +53,15 @@
                 </button>
                 <button class="nav-item" data-tab="pesquisas">
                     <i class="fas fa-poll"></i>
-                    Pesquisa Rápida
+                    Pesquisas
+                </button>
+                <button class="nav-item" data-tab="avaliacoes">
+                    <i class="fas fa-clipboard-check"></i>
+                    Avaliações
+                </button>
+                <button class="nav-item" data-tab="historico" id="historico-tab">
+                    <i class="fas fa-history"></i>
+                    Histórico
                 </button>
                 <button class="nav-item" data-tab="settings">
                     <i class="fas fa-cog"></i>
@@ -67,7 +76,7 @@
             <header class="header">
                 <div class="header-left">
                     <h2 id="page-title">Dashboard</h2>
-                    <p>Bem-vindo ao sistema de feedback da Lumicenter</p>
+                    <p>Sistema da Lumicenter Lighting para Feedbacks, Reconhecimentos, Avaliações e muito mais!</p>
                 </div>
                 <div class="header-right">
                     <button class="notification-btn" title="Logout" onclick="logout()">
@@ -85,19 +94,12 @@
                 <!-- Dashboard -->
                 <div id="dashboard-content" class="tab-content">
                     <!-- Metrics -->
-                    <div class="metrics-grid">
+                    <div class="metrics-grid" style="margin-top: 0px">
                         <div class="metric-card">
                             <div class="metric-card-content">
                                 <div class="metric-info">
-                                    <h3>Feedbacks Recebidos</h3>
+                                    <h3><i class="fas fa-inbox" style="color: #3b82f6; margin-right: 8px;"></i>Feedbacks Recebidos</h3>
                                     <div class="value" id="feedbacks-received-count">-</div>
-                                    <div class="metric-change" id="feedbacks-change">
-                                        <i class="fas fa-trending-up"></i>
-                                        Carregando...
-                                    </div>
-                                </div>
-                                <div class="metric-icon icon-blue">
-                                    <i class="fas fa-comments"></i>
                                 </div>
                             </div>
                         </div>
@@ -105,15 +107,8 @@
                         <div class="metric-card">
                             <div class="metric-card-content">
                                 <div class="metric-info">
-                                    <h3>Reconhecimentos Recebidos</h3>
+                                    <h3><i class="fas fa-star" style="color: #f59e0b; margin-right: 8px;"></i>Reconhecimentos Recebidos</h3>
                                     <div class="value" id="recognitions-received-count">-</div>
-                                    <div class="metric-change" id="recognitions-change">
-                                        <i class="fas fa-trending-up"></i>
-                                        Carregando...
-                                    </div>
-                                </div>
-                                <div class="metric-icon icon-amber">
-                                    <i class="fas fa-award"></i>
                                 </div>
                             </div>
                         </div>
@@ -121,15 +116,8 @@
                         <div class="metric-card">
                             <div class="metric-card-content">
                                 <div class="metric-info">
-                                    <h3>Feedbacks Enviados</h3>
+                                    <h3><i class="fas fa-paper-plane" style="color: #10b981; margin-right: 8px;"></i>Feedbacks Enviados</h3>
                                     <div class="value" id="feedbacks-sent-count">-</div>
-                                    <div class="metric-change" id="participation-change">
-                                        <i class="fas fa-trending-up"></i>
-                                        Carregando...
-                                    </div>
-                                </div>
-                                <div class="metric-icon icon-green">
-                                    <i class="fas fa-paper-plane"></i>
                                 </div>
                             </div>
                         </div>
@@ -137,22 +125,15 @@
                         <div class="metric-card">
                             <div class="metric-card-content">
                                 <div class="metric-info">
-                                    <h3>Pontuação Média</h3>
+                                    <h3><i class="fas fa-chart-line" style="color: #8b5cf6; margin-right: 8px;"></i>Pontuação Média</h3>
                                     <div class="value" id="avg-score">-</div>
-                                    <div class="metric-change" id="score-change">
-                                        <i class="fas fa-trending-up"></i>
-                                        Carregando...
-                                    </div>
-                                </div>
-                                <div class="metric-icon icon-purple">
-                                    <i class="fas fa-star"></i>
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Dashboard Grid -->
-                    <div class="dashboard-grid">
+                    <div class="dashboard-grid quick-actions-grid" style="margin-bottom: 0px">
                         <!-- Quick Actions -->
                         <div class="card">
                             <h3>
@@ -160,7 +141,7 @@
                                 Ações Rápidas
                             </h3>
                             <div class="action-buttons">
-                                <button class="btn btn-primary" onclick="openFeedbackModal()">
+                                <button class="btn btn-amber" onclick="openFeedbackModal()">
                                     <i class="fas fa-plus"></i>
                                     Enviar Feedback
                                 </button>
@@ -168,70 +149,32 @@
                                     <i class="fas fa-award"></i>
                                     Reconhecer Colega
                                 </button>
-                                <button class="btn btn-secondary" onclick="openObjetivoModal()">
+                                <button class="btn btn-secondary" onclick="openNewObjetivoModal()">
                                     <i class="fas fa-bullseye"></i>
                                     Novo Objetivo
                                 </button>
-                                <button class="btn btn-success" onclick="window.location.href='/avaliacoes-periodicas.html'" id="create-evaluation-btn" style="display: none;">
-                                    <i class="fas fa-clipboard-check"></i>
-                                    Criar Avaliação
-                                </button>
                             </div>
                         </div>
-
-                        <!-- Next Evaluations -->
+                        
+                        <!-- Recent Recognitions -->
                         <div class="card">
                             <h3>
-                                <i class="fas fa-calendar" style="color: #10b981;"></i>
-                                Próximas Avaliações
+                                <i class="fas fa-heart" style="color: #ef4444;"></i>
+                                Últimos Reconhecimentos
                             </h3>
-                            <div class="evaluations-list" id="evaluations-list">
+                            <p style="color: #6b7280; font-size: 14px; margin-bottom: 16px;">
+                                <i class="fas fa-info-circle"></i>
+                                Mostra os últimos reconhecimentos enviados e recebidos
+                            </p>
+                            <div class="recognitions-list" id="recognitions-list">
                                 <div class="loading">
                                     <div class="spinner"></div>
-                                    Carregando avaliações...
+                                    Carregando reconhecimentos...
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Recent Recognitions -->
-                    <div class="card">
-                        <h3>
-                            <i class="fas fa-heart" style="color: #ef4444;"></i>
-                            Últimos Reconhecimentos
-                        </h3>
-                        <div class="recognitions-list" id="recognitions-list">
-                            <div class="loading">
-                                <div class="spinner"></div>
-                                Carregando reconhecimentos...
                             </div>
                         </div>
                     </div>
 
-                    <!-- Rankings Section -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>
-                                <i class="fas fa-trophy" style="color: #f59e0b;"></i>
-                                Ranking de Usuários
-                            </h3>
-                            <div class="ranking-filters">
-                                <select id="ranking-period" onchange="loadUserRankings()">
-                                    <option value="7">Últimos 7 dias</option>
-                                    <option value="30" selected>Últimos 30 dias</option>
-                                    <option value="90">Últimos 90 dias</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="rankings-container">
-                            <div class="rankings-list" id="rankings-list">
-                                <div class="loading">
-                                    <div class="spinner"></div>
-                                    Carregando rankings...
-                                </div>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- Gamification Dashboard -->
                     <div class="card">
@@ -242,16 +185,27 @@
                             </h3>
                             <div class="gamification-stats">
                                 <span class="stat-item">
-                                    <i class="fas fa-coins" style="color: #f59e0b;"></i>
-                                    <span id="user-lumicoins">-</span> Lumicoins
-                                </span>
-                                <span class="stat-item">
                                     <i class="fas fa-star" style="color: #10b981;"></i>
                                     <span id="user-points">-</span> Pontos
                                 </span>
                             </div>
                         </div>
                         <div class="gamification-content">
+                            <!-- Informações do usuário logado -->
+                            <div class="user-ranking-info" id="user-ranking-info" style="display: none;">
+                                <div class="user-ranking-card">
+                                    <div class="user-ranking-position">
+                                        <i class="fas fa-medal"></i>
+                                        <span id="user-position">-</span>
+                                    </div>
+                                    <div class="user-ranking-details">
+                                        <div class="user-ranking-name">Você</div>
+                                        <div class="user-ranking-points" id="user-total-points">- pontos</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Top 10 usuários -->
                             <div class="leaderboard-preview" id="leaderboard-preview">
                                 <div class="loading">
                                     <div class="spinner"></div>
@@ -348,7 +302,7 @@
                     </div>
 
                     <!-- Métricas da Equipe -->
-                    <div class="dashboard-grid">
+                    <div class="dashboard-grid" style="margin-bottom: 0px">
                         <div class="card">
                             <h3>
                                 <i class="fas fa-chart-line" style="color: #10b981;"></i>
@@ -383,39 +337,57 @@
                             Membros da Equipe
                         </h3>
                         <div class="team-filters">
-                            <div class="filter-group">
-                                <label>Departamento:</label>
-                                <select id="team-department-filter" onchange="loadTeamMembers()">
-                                    <option value="">Todos</option>
-                                </select>
+                            <div class="filter-group" style="flex: 1; max-width: 500px;">
+                                <label>
+                                    <i class="fas fa-building"></i>
+                                    Pesquisar Departamento:
+                                </label>
+                                <input 
+                                    type="text" 
+                                    id="team-department-search" 
+                                    class="form-input"
+                                    placeholder="Digite para buscar departamento..." 
+                                    oninput="filterDepartmentSearch()"
+                                    autocomplete="off"
+                                />
+                                <div id="department-suggestions" class="department-suggestions hidden"></div>
                             </div>
-                            <div class="filter-group">
-                                <label>Status:</label>
-                                <select id="team-status-filter" onchange="loadTeamMembers()">
-                                    <option value="">Todos</option>
-                                    <option value="ativo">Ativo</option>
-                                    <option value="inativo">Inativo</option>
-                                </select>
+                            
+                            <div class="filter-group" style="flex: 1; max-width: 500px;">
+                                <label>
+                                    <i class="fas fa-user-search"></i>
+                                    Pesquisar Usuário:
+                                </label>
+                                <div class="searchable-select">
+                                    <input 
+                                        type="text" 
+                                        class="form-input" 
+                                        id="team-user-search" 
+                                        placeholder="Digite para buscar colaborador..." 
+                                        oninput="filterTeamUsers('team-user-search', 'team-user-list')"
+                                        autocomplete="off"
+                                    />
+                                    <div class="select-dropdown" id="team-user-list">
+                                        <div class="select-option" data-value="" onclick="selectTeamUser('', 'Todos os usuários')">
+                                            Todos os usuários
+                                        </div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="team-selected-user" value="">
+                            </div>
+                            
+                            <div class="filter-group" style="display: flex; flex-direction: column; gap: 8px;">
+                                <label style="opacity: 0; pointer-events: none;">Ações:</label>
+                                <button class="btn-clear-filters" onclick="clearTeamFilters()" title="Limpar todos os filtros">
+                                    <i class="fas fa-times-circle"></i>
+                                    Limpar Filtros
+                                </button>
                             </div>
                         </div>
                         <div id="team-members-list">
                             <div class="loading">
                                 <div class="spinner"></div>
                                 Carregando membros da equipe...
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Avaliações Pendentes -->
-                    <div class="card">
-                        <h3>
-                            <i class="fas fa-clipboard-check" style="color: #ef4444;"></i>
-                            Avaliações Pendentes
-                        </h3>
-                        <div id="pending-evaluations">
-                            <div class="loading">
-                                <div class="spinner"></div>
-                                Carregando avaliações...
                             </div>
                         </div>
                     </div>
@@ -432,42 +404,40 @@
 
                     <!-- Filtros de Período -->
                     <div class="card">
-                        <div class="analytics-filters">
-                            <div class="filter-group">
-                                <label>Período:</label>
-                                <select id="analytics-period" onchange="loadAnalytics()">
+                        <div class="analytics-filters-container">
+                            <div class="filter-item">
+                                <label for="analytics-period">Período:</label>
+                                <select id="analytics-period" class="analytics-select">
                                     <option value="7">Últimos 7 dias</option>
                                     <option value="30" selected>Últimos 30 dias</option>
                                     <option value="90">Últimos 90 dias</option>
                                     <option value="365">Último ano</option>
                                 </select>
                             </div>
-                            <div class="filter-group">
-                                <label>Departamento:</label>
-                                <select id="analytics-department" onchange="loadAnalytics()">
+                            <div class="filter-item">
+                                <label for="analytics-department">Departamento:</label>
+                                <select id="analytics-department" class="analytics-select">
                                     <option value="">Todos</option>
                                 </select>
                             </div>
-                            <div class="filter-group">
-                                <label>Tipo de Relatório:</label>
-                                <select id="analytics-type" onchange="loadAnalytics()">
-                                    <option value="engagement">Engajamento</option>
-                                    <option value="performance">Desempenho</option>
-                                    <option value="feedback">Feedbacks</option>
-                                    <option value="mood">Humor</option>
-                                </select>
+                            <div class="filter-item">
+                                <button class="btn btn-amber" onclick="loadAnalytics()">
+                                    <i class="fas fa-sync-alt"></i>
+                                    Atualizar Dados
+                                </button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Métricas Principais -->
+                    <!-- Indicadores Principais -->
                     <div class="dashboard-grid">
-                        <div class="card">
+                        <!-- Engajamento Geral -->
+                        <div class="card" style="margin-bottom: 0px">
                             <h3>
-                                <i class="fas fa-users" style="color: #10b981;"></i>
-                                Participação
+                                <i class="fas fa-heart" style="color: #ef4444;"></i>
+                                Engajamento Geral
                             </h3>
-                            <div id="participation-metrics">
+                            <div id="engagement-metrics">
                                 <div class="loading">
                                     <div class="spinner"></div>
                                     Carregando...
@@ -475,12 +445,13 @@
                             </div>
                         </div>
 
-                        <div class="card">
+                        <!-- Humor da Equipe -->
+                        <div class="card" style="margin-bottom: 0px">
                             <h3>
-                                <i class="fas fa-star" style="color: #f59e0b;"></i>
-                                Satisfação
+                                <i class="fas fa-smile" style="color: #f59e0b;"></i>
+                                Humor da Equipe
                             </h3>
-                            <div id="satisfaction-metrics">
+                            <div id="mood-metrics">
                                 <div class="loading">
                                     <div class="spinner"></div>
                                     Carregando...
@@ -488,12 +459,13 @@
                             </div>
                         </div>
 
-                        <div class="card">
+                        <!-- Feedbacks e Reconhecimentos -->
+                        <div class="card" style="margin-bottom: 0px">
                             <h3>
-                                <i class="fas fa-trending-up" style="color: #3b82f6;"></i>
-                                Tendências
+                                <i class="fas fa-comments" style="color: #3b82f6;"></i>
+                                Feedbacks & Reconhecimentos
                             </h3>
-                            <div id="trends-metrics">
+                            <div id="feedback-metrics">
                                 <div class="loading">
                                     <div class="spinner"></div>
                                     Carregando...
@@ -501,16 +473,59 @@
                             </div>
                         </div>
 
-                        <div class="card">
+                        <!-- Gamificação -->
+                        <div class="card" style="margin-bottom: 0px">
                             <h3>
-                                <i class="fas fa-chart-pie" style="color: #8b5cf6;"></i>
-                                Distribuição
+                                <i class="fas fa-trophy" style="color: #8b5cf6;"></i>
+                                Gamificação
                             </h3>
-                            <div id="distribution-metrics">
+                            <div id="gamification-metrics">
                                 <div class="loading">
                                     <div class="spinner"></div>
                                     Carregando...
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Objetivos -->
+                        <div class="card" style="margin-bottom: 0px">
+                            <h3>
+                                <i class="fas fa-target" style="color: #10b981;"></i>
+                                Objetivos
+                            </h3>
+                            <div id="objectives-metrics">
+                                <div class="loading">
+                                    <div class="spinner"></div>
+                                    Carregando...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Performance da Equipe -->
+                        <div class="card" style="margin-bottom: 0px">
+                            <h3>
+                                <i class="fas fa-chart-line" style="color: #06b6d4;"></i>
+                                Performance da Equipe
+                            </h3>
+                            <div id="performance-metrics">
+                                <div class="loading">
+                                    <div class="spinner"></div>
+                                    Carregando...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ranking de Colaboradores -->
+                    <div class="card">
+                        <h3>
+                            <i class="fas fa-medal" style="color: #f59e0b;"></i>
+                            Top Colaboradores da Equipe
+                        </h3>
+                        <div id="top-users-ranking">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                Carregando ranking...
                             </div>
                         </div>
                     </div>
@@ -595,7 +610,7 @@
 
                     <!-- Métricas de Humor -->
                     <div class="dashboard-grid">
-                        <div class="card">
+                        <div class="card" id="my-humor-card">
                             <h3>
                                 <i class="fas fa-chart-line" style="color: #10b981;"></i>
                                 Seu Humor Hoje
@@ -608,10 +623,10 @@
                             </div>
                         </div>
 
-                        <div class="card">
+                        <div class="card" id="company-humor-card" style="display: none;">
                             <h3>
                                 <i class="fas fa-users" style="color: #3b82f6;"></i>
-                                Humor da Empresa
+                                Humor da Equipe
                             </h3>
                             <div id="company-humor">
                                 <div class="loading">
@@ -645,28 +660,22 @@
                                 <i class="fas fa-search search-icon"></i>
                                 <input type="text" class="search-input" placeholder="Buscar objetivos..." id="objetivos-search">
                             </div>
-                            <div class="filter-dropdown">
-                                <button class="btn btn-secondary" onclick="toggleObjetivosFilters()">
-                                    <i class="fas fa-filter"></i>
-                                    Filtros
-                                </button>
-                                <div class="filter-menu hidden" id="objetivos-filter-menu">
-                                    <div class="filter-section">
-                                        <h4>Departamento</h4>
-                                        <div id="dept-filters"></div>
-                                    </div>
-                                    <div class="filter-section">
-                                        <h4>Status</h4>
-                                        <div id="status-filters"></div>
-                                    </div>
-                                    <div class="filter-section">
-                                        <h4>Tipo</h4>
-                                        <div id="tipo-filters"></div>
-                                    </div>
-                                </div>
+                            <div class="search-box">
+                                <i class="fas fa-user search-icon"></i>
+                                <input type="text" class="search-input" placeholder="Filtrar por responsável..." id="objetivos-responsavel-search">
+                            </div>
+                            <div class="search-box">
+                                <i class="fas fa-filter search-icon"></i>
+                                <select class="search-input" id="objetivos-status-filter" onchange="loadObjetivos()">
+                                    <option value="">Todos os status</option>
+                                    <option value="Ativo">Ativo</option>
+                                    <option value="Agendado">Agendado</option>
+                                    <option value="Concluído">Concluído</option>
+                                    <option value="Expirado">Expirado</option>
+                                </select>
                             </div>
                         </div>
-                        <button class="btn btn-amber" onclick="openObjetivoModal()">
+                        <button class="btn btn-amber" onclick="openNewObjetivoModal()">
                             <i class="fas fa-plus"></i>
                             Novo Objetivo
                         </button>
@@ -680,41 +689,477 @@
                     </div>
                 </div>
 
-                <!-- Pesquisa Rápida -->
+
+                <!-- Pesquisas -->
                 <div id="pesquisas-content" class="tab-content hidden">
-                    <div class="pesquisas-header">
-                        <div class="pesquisas-filters">
-                            <div class="search-box">
-                                <i class="fas fa-search search-icon"></i>
-                                <input type="text" class="search-input" placeholder="Buscar pesquisas..." id="pesquisas-search">
-                            </div>
-                            <div class="filter-dropdown">
-                                <button class="btn btn-secondary" onclick="togglePesquisasFilters()">
-                                    <i class="fas fa-filter"></i>
-                                    Filtros
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>
+                                <i class="fas fa-poll" style="color: #0d556d;"></i>
+                                Sistema de Pesquisas
+                            </h3>
+                            <div class="pesquisas-actions">
+                                <button class="btn btn-success" onclick="window.open('nova-pesquisa.html', '_blank', 'width=1200,height=800')" id="create-survey-btn" style="display: none;">
+                                    <i class="fas fa-plus"></i>
+                                    Nova Pesquisa
                                 </button>
-                                <div class="filter-menu hidden" id="pesquisas-filter-menu">
-                                    <div class="filter-section">
-                                        <h4>Status</h4>
-                                        <div id="pesquisa-status-filters"></div>
+                                <button class="btn btn-info" onclick="window.open('pesquisas-novo.html', '_blank', 'width=1400,height=900')">
+                                    <i class="fas fa-list"></i>
+                                    Gerenciar Pesquisas
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="pesquisas-overview">
+                            <div class="overview-grid">
+                                <div class="overview-card">
+                                    <div class="overview-icon">
+                                        <i class="fas fa-poll"></i>
                                     </div>
-                                    <div class="filter-section">
-                                        <h4>Tipo</h4>
-                                        <div id="pesquisa-tipo-filters"></div>
+                                    <div class="overview-content">
+                                        <h4>Pesquisas Ativas</h4>
+                                        <span class="overview-count" id="active-surveys-count">-</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="overview-card">
+                                    <div class="overview-icon">
+                                        <i class="fas fa-users"></i>
+                                    </div>
+                                    <div class="overview-content">
+                                        <h4>Minhas Respostas</h4>
+                                        <span class="overview-count" id="my-responses-count">-</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="overview-card">
+                                    <div class="overview-icon">
+                                        <i class="fas fa-clock"></i>
+                                    </div>
+                                    <div class="overview-content">
+                                        <h4>Pendentes</h4>
+                                        <span class="overview-count" id="pending-surveys-count">-</span>
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <button class="btn btn-amber" onclick="openPesquisaModal()" id="nova-pesquisa-btn" style="display: none;">
-                            <i class="fas fa-plus"></i>
-                            Nova Pesquisa
-                        </button>
+                        
+                        <!-- Filtros de Pesquisas -->
+                        <div class="card">
+                            <div class="team-filters" style="margin-bottom: 0;">
+                                <div class="filter-group" style="flex: 1; max-width: 500px;">
+                                    <label>
+                                        <i class="fas fa-search"></i>
+                                        Pesquisar por Nome:
+                                    </label>
+                                    <input 
+                                        type="text" 
+                                        id="survey-name-search" 
+                                        class="form-input"
+                                        placeholder="Digite para buscar pesquisa..." 
+                                        oninput="filterSurveys()"
+                                        autocomplete="off"
+                                    />
+                                </div>
+                                
+                                <div class="filter-group" style="flex: 1; max-width: 300px;">
+                                    <label>
+                                        <i class="fas fa-filter"></i>
+                                        Filtrar por Status:
+                                    </label>
+                                    <select id="survey-status-filter" class="form-select" onchange="filterSurveys()">
+                                        <option value="">Todos</option>
+                                        <option value="ativa">Ativas</option>
+                                        <option value="encerrada">Encerradas</option>
+                                        <option value="respondida">Respondidas</option>
+                                        <option value="pendente">Sem Resposta</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="filter-group" style="display: flex; flex-direction: column; gap: 8px;">
+                                    <label style="opacity: 0; pointer-events: none;">Ações:</label>
+                                    <button class="btn-clear-filters" onclick="clearSurveyFilters()" title="Limpar todos os filtros">
+                                        <i class="fas fa-times-circle"></i>
+                                        Limpar Filtros
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="pesquisas-list" id="user-surveys-list">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                Carregando pesquisas...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Avaliações -->
+                <div id="avaliacoes-content" class="tab-content hidden">
+                    <div class="card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <div>
+                                <h3 style="margin: 0;">
+                                    <i class="fas fa-clipboard-check" style="color: #3b82f6;"></i>
+                                    Avaliações
+                                </h3>
+                                <p style="margin: 8px 0 0 0; color: #6b7280; font-size: 14px;">Sistema de Avaliações - O conteúdo será personalizado de acordo com seu setor e permissões.</p>
+                            </div>
+                            
+                            <div style="display: flex; gap: 12px; align-items: center;">
+                                <!-- Botão Editar Templates - visível apenas para RH, T&D e DEPARTAMENTO ADM/RH/SESMT -->
+                                <button class="btn btn-amber" id="btn-editar-templates" onclick="abrirModalEditarQuestionarios()" style="display: none;">
+                                    <i class="fas fa-edit"></i>
+                                    Editar Templates
+                                </button>
+                                
+                                <!-- Botões de alternância - visível apenas para RH, T&D e DEPARTAMENTO ADM/RH/SESMT -->
+                                <div id="avaliacoes-toggle-buttons" style="display: none;">
+                                    <div class="btn-group" style="display: flex; gap: 8px; background: #f3f4f6; padding: 4px; border-radius: 8px;">
+                                        <button class="btn-toggle active" data-view="minhas" onclick="toggleAvaliacoesView('minhas')">
+                                            <i class="fas fa-user"></i>
+                                            Minhas Avaliações
+                                        </button>
+                                        <button class="btn-toggle" data-view="todas" onclick="toggleAvaliacoesView('todas')">
+                                            <i class="fas fa-list"></i>
+                                            Todas as Avaliações
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="pesquisas-list" id="pesquisas-list">
-                        <div class="loading">
-                            <div class="spinner"></div>
-                            Carregando pesquisas...
+                    <!-- Visualização: Minhas Avaliações -->
+                    <div id="minhas-avaliacoes-view" class="avaliacoes-view">
+                        <div class="card">
+                            <h3>
+                                <i class="fas fa-clipboard-list" style="color: #10b981;"></i>
+                                Avaliações Pendentes
+                            </h3>
+                            <div style="text-align: center; padding: 40px 20px;">
+                                <i class="fas fa-clipboard-list" style="font-size: 64px; color: #e5e7eb; margin-bottom: 16px;"></i>
+                                <h4 style="color: #6b7280; margin-bottom: 8px;">Conteúdo em Desenvolvimento</h4>
+                                <p style="color: #9ca3af;">Suas avaliações para responder aparecerão aqui.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Visualização: Todas as Avaliações (apenas para setores autorizados) -->
+                    <div id="todas-avaliacoes-view" class="avaliacoes-view" style="display: none;">
+                        <!-- Conteúdo dinâmico -->
+                        <div id="todas-avaliacoes-conteudo">
+                            <div class="card">
+                                <div style="text-align: center; padding: 40px 20px;">
+                                    <i class="fas fa-tasks" style="font-size: 64px; color: #e5e7eb; margin-bottom: 16px;"></i>
+                                    <h4 style="color: #6b7280; margin-bottom: 8px;">Visão Administrativa</h4>
+                                    <p style="color: #9ca3af;">Lista completa de todas as avaliações da empresa.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Histórico Section -->
+                <div id="historico-content" class="tab-content hidden">
+                    <div class="card">
+                        <h3>
+                            <i class="fas fa-history" style="color: #0d556d;"></i>
+                            Histórico de Feedbacks - Sistema Anterior
+                        </h3>
+                        <p>Visualize e analise os dados históricos do sistema anterior de feedbacks da empresa.</p>
+                    </div>
+
+                    <!-- Filtros de Histórico -->
+                    <div class="card">
+                        <h3>
+                            <i class="fas fa-filter" style="color: #f59e0b;"></i>
+                            Filtros de Pesquisa
+                        </h3>
+                        <div class="historico-filters">
+                            <div class="filter-group">
+                                <label>Período:</label>
+                                <select id="historico-periodo" onchange="loadHistoricoData()">
+                                    <option value="todos">Todos os Períodos</option>
+                                    <option value="2023">2023</option>
+                                    <option value="2024">2024</option>
+                                    <option value="2025">2025</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Tipo de Relatório:</label>
+                                <select id="historico-tipo" onchange="loadHistoricoData()">
+                                    <option value="todos">Todos os Relatórios</option>
+                                    <option value="avaliacao">Avaliação de Desempenho</option>
+                                    <option value="feedback">Conteúdo de Feedbacks</option>
+                                    <option value="humor">Histórico de Humor</option>
+                                    <option value="colaboradores">Listagem de Colaboradores</option>
+                                    <option value="medias">Médias de Feedbacks</option>
+                                    <option value="ranking">Ranking de Gamificação</option>
+                                    <option value="resumo">Resumo de Atividades</option>
+                                    <option value="turnover">Turnovers</option>
+                                    <option value="pdi">Planos de Desenvolvimento</option>
+                                    <option value="pesquisas">Pesquisas Rápidas</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label>Departamento:</label>
+                                <select id="historico-departamento" onchange="loadHistoricoData()">
+                                    <option value="todos">Todos os Departamentos</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+            <!-- Seção de Relatórios de Avaliação de Desempenho -->
+            <div class="card historico-section collapsed" data-tipo="avaliacao">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-clipboard-check" style="color: #10b981;"></i>
+                                    Avaliação de Desempenho por Colaborador
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('avaliacao')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="avaliacao-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de avaliação...
+                            </div>
+                            <div class="historico-table" id="avaliacao-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Conteúdo de Feedbacks -->
+                    <div class="card historico-section collapsed" data-tipo="feedback">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-comments" style="color: #3b82f6;"></i>
+                                    Conteúdo de Feedbacks
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('feedback')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="feedback-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de feedbacks...
+                            </div>
+                            <div class="historico-table" id="feedback-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Histórico de Humor -->
+                    <div class="card historico-section collapsed" data-tipo="humor">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-smile" style="color: #f59e0b;"></i>
+                                    Histórico de Humor
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('humor')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="humor-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de humor...
+                            </div>
+                            <div class="historico-table" id="humor-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Listagem de Colaboradores -->
+                    <div class="card historico-section collapsed" data-tipo="colaboradores">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-users" style="color: #8b5cf6;"></i>
+                                    Listagem de Colaboradores
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('colaboradores')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="colaboradores-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de colaboradores...
+                            </div>
+                            <div class="historico-table" id="colaboradores-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Médias de Feedbacks -->
+                    <div class="card historico-section collapsed" data-tipo="medias">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-chart-bar" style="color: #ef4444;"></i>
+                                    Médias de Feedbacks
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('medias')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="medias-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de médias...
+                            </div>
+                            <div class="historico-table" id="medias-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Ranking de Gamificação -->
+                    <div class="card historico-section collapsed" data-tipo="ranking">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-trophy" style="color: #f59e0b;"></i>
+                                    Ranking de Gamificação
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('ranking')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="ranking-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de ranking...
+                            </div>
+                            <div class="historico-table" id="ranking-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Resumo de Atividades -->
+                    <div class="card historico-section collapsed" data-tipo="resumo">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-chart-line" style="color: #059669;"></i>
+                                    Resumo de Atividades
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('resumo')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="resumo-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de resumo...
+                            </div>
+                            <div class="historico-table" id="resumo-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Turnovers -->
+                    <div class="card historico-section collapsed" data-tipo="turnover">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-user-times" style="color: #dc2626;"></i>
+                                    Turnovers
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('turnover')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="turnover-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de turnover...
+                            </div>
+                            <div class="historico-table" id="turnover-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Planos de Desenvolvimento Individual -->
+                    <div class="card historico-section collapsed" data-tipo="pdi">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-graduation-cap" style="color: #7c3aed;"></i>
+                                    Planos de Desenvolvimento Individual
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('pdi')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="pdi-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de PDI...
+                            </div>
+                            <div class="historico-table" id="pdi-table" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Seção de Pesquisas Rápidas -->
+                    <div class="card historico-section collapsed" data-tipo="pesquisas">
+                        <div class="card-header">
+                            <div class="header-content">
+                                <h3>
+                                    <i class="fas fa-poll" style="color: #0ea5e9;"></i>
+                                    Pesquisas Rápidas
+                                </h3>
+                                <div class="header-actions">
+                                    <button class="btn btn-amber btn-sm" onclick="exportHistoricoData('pesquisas')">
+                                        <i class="fas fa-download"></i>
+                                        Exportar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="historico-table-container">
+                            <div class="loading" id="pesquisas-loading">
+                                <div class="spinner"></div>
+                                Carregando dados de pesquisas...
+                            </div>
+                            <div class="historico-table" id="pesquisas-table" style="display: none;"></div>
                         </div>
                     </div>
                 </div>
@@ -746,10 +1191,6 @@
                             <div class="form-group">
                                 <label class="form-label">Departamento</label>
                                 <input type="text" class="form-input" id="profile-department" value="">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">Cargo</label>
-                                <input type="text" class="form-input" id="profile-position" value="">
                             </div>
                             <button class="btn btn-amber" onclick="updateProfile()">
                                 <i class="fas fa-save"></i>
@@ -897,8 +1338,7 @@
                     <div class="searchable-select">
                         <input type="text" class="form-input" id="feedback-to-user-search" placeholder="Digite para buscar colaborador..." oninput="filterUsers('feedback-to-user-search', 'feedback-to-user-list')">
                         <div class="select-dropdown" id="feedback-to-user-list">
-                            <div class="select-option" data-value="" onclick="selectUser('', 'Selecionar colaborador...', 'feedback-to-user')">
-                                Selecionar colaborador...
+                            <div class="select-option" data-value="" onclick="selectUser('', '', 'feedback-to-user')">
                             </div>
                         </div>
                     </div>
@@ -916,10 +1356,17 @@
                 <div class="form-group">
                     <label class="form-label">Categoria</label>
                     <select class="form-select" id="feedback-category">
-                        <option value="Técnico">Técnico</option>
-                        <option value="Atendimento">Atendimento</option>
-                        <option value="Vendas">Vendas</option>
-                        <option value="Design">Design</option>
+                        <option value="Comunicação">Comunicação</option>
+                        <option value="Trabalho em Equipe">Trabalho em Equipe</option>
+                        <option value="Proatividade">Proatividade</option>
+                        <option value="Qualidade do Trabalho">Qualidade do Trabalho</option>
+                        <option value="Pontualidade">Pontualidade</option>
+                        <option value="Organização">Organização</option>
+                        <option value="Criatividade">Criatividade</option>
+                        <option value="Resolução de Problemas">Resolução de Problemas</option>
+                        <option value="Relacionamento Interpessoal">Relacionamento Interpessoal</option>
+                        <option value="Comprometimento">Comprometimento</option>
+                        <option value="Desenvolvimento Profissional">Desenvolvimento Profissional</option>
                         <option value="Liderança">Liderança</option>
                         <option value="Outros">Outros</option>
                     </select>
@@ -959,8 +1406,7 @@
                     <div class="searchable-select">
                         <input type="text" class="form-input" id="recognition-to-user-search" placeholder="Digite para buscar colaborador..." oninput="filterUsers('recognition-to-user-search', 'recognition-to-user-list')">
                         <div class="select-dropdown" id="recognition-to-user-list">
-                            <div class="select-option" data-value="" onclick="selectUser('', 'Selecionar colaborador...', 'recognition-to-user')">
-                                Selecionar colaborador...
+                            <div class="select-option" data-value="" onclick="selectUser('', '', 'recognition-to-user')">
                             </div>
                         </div>
                     </div>
@@ -997,7 +1443,7 @@
         <div class="modal">
             <div class="modal-content">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <h3 style="margin: 0;">
+                    <h3 style="margin: 0;" id="objetivo-modal-title">
                         <i class="fas fa-bullseye"></i>
                         Novo Objetivo
                     </h3>
@@ -1013,15 +1459,23 @@
                     <label class="form-label">Descrição</label>
                     <textarea class="form-textarea" id="objetivo-descricao" placeholder="Descreva o objetivo..."></textarea>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Responsável</label>
-                    <div class="searchable-select">
-                        <input type="text" class="form-input" id="objetivo-responsavel-search" placeholder="Digite para buscar responsável..." oninput="filterUsers('objetivo-responsavel-search', 'objetivo-responsavel-list')">
-                        <div class="select-dropdown" id="objetivo-responsavel-list">
-                            <div class="select-option" data-value="" onclick="selectUser('', 'Selecionar responsável...', 'objetivo-responsavel')">
-                                Selecionar responsável...
+                <div class="form-group" id="responsavel-field">
+                    <label class="form-label">Responsáveis</label>
+                    <div class="multi-select-container">
+                        <div class="searchable-select">
+                            <input type="text" class="form-input" id="objetivo-responsavel-search" placeholder="Digite para buscar responsáveis..." oninput="filterUsers('objetivo-responsavel-search', 'objetivo-responsavel-list')" onfocus="if(this.value === 'Selecionar responsáveis...') this.value = ''">
+                            <div class="select-dropdown" id="objetivo-responsavel-list">
+                                <div class="select-option" data-value="" onclick="selectUser('', 'Selecionar responsáveis...', 'objetivo-responsavel-multi')">
+                                    Selecionar responsáveis...
+                                </div>
                             </div>
                         </div>
+                        
+                        <!-- Container para responsáveis selecionados -->
+                        <div id="selected-responsaveis-container" class="selected-responsaveis" style="margin-top: 8px; min-height: 40px;"></div>
+                    
+                        <!-- Campos hidden para armazenar os IDs selecionados -->
+                        <div id="responsaveis-selected" style="display: none;"></div>
                     </div>
                     <input type="hidden" id="objetivo-responsavel" value="">
                 </div>
@@ -1035,42 +1489,41 @@
                         <input type="date" class="form-input" id="objetivo-data-fim">
                     </div>
                 </div>
-                <div class="modal-actions">
+                
+                <!-- Campos para Check-in (ocultos por padrão) -->
+                <div id="checkin-fields" class="hidden">
+                    <div class="form-group">
+                        <label class="form-label">Progresso Atual (%)</label>
+                        <input type="number" class="form-input" id="checkin-progresso" min="0" max="100" placeholder="Digite o progresso atual">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Observações</label>
+                        <textarea class="form-textarea" id="checkin-observacoes" placeholder="Adicione observações sobre o progresso..."></textarea>
+                    </div>
+                </div>
+                
+                <!-- Campos para Detalhes (ocultos por padrão) -->
+                <div id="detalhes-fields" class="hidden">
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <input type="text" class="form-input" id="objetivo-status" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Progresso Atual</label>
+                        <input type="text" class="form-input" id="objetivo-progresso-atual" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Criado por</label>
+                        <input type="text" class="form-input" id="objetivo-criado-por" readonly>
+                    </div>
+                </div>
+                <div class="modal-actions" id="objetivo-modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="closeObjetivoModal()">
                         Cancelar
                     </button>
-                    <button type="button" class="btn btn-amber" onclick="submitObjetivo()">
+                    <button type="button" class="btn btn-amber" id="objetivo-submit-btn" onclick="submitObjetivo()">
                         <i class="fas fa-bullseye"></i>
                         Criar Objetivo
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Check-in Modal -->
-    <div id="checkin-modal" class="modal-overlay hidden">
-        <div class="modal">
-            <div class="modal-content">
-                <h3>
-                    <i class="fas fa-check-circle"></i>
-                    Check-in do Objetivo
-                </h3>
-                <div class="form-group">
-                    <label class="form-label">Progresso (%)</label>
-                    <input type="number" class="form-input" id="checkin-progresso" min="0" max="100" placeholder="0-100">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Observações</label>
-                    <textarea class="form-textarea" id="checkin-observacoes" placeholder="Descreva o progresso..."></textarea>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="closeCheckinModal()">
-                        Cancelar
-                    </button>
-                    <button type="button" class="btn btn-amber" onclick="submitCheckin()">
-                        <i class="fas fa-check"></i>
-                        Registrar Check-in
                     </button>
                 </div>
             </div>
@@ -1116,6 +1569,10 @@
                     <textarea class="form-textarea" id="pesquisa-opcoes" placeholder="Digite cada opção em uma linha separada..."></textarea>
                 </div>
                 <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Data de Início</label>
+                        <input type="datetime-local" class="form-input" id="pesquisa-data-inicio">
+                    </div>
                     <div class="form-group">
                         <label class="form-label">Data de Encerramento</label>
                         <input type="datetime-local" class="form-input" id="pesquisa-data-encerramento">
@@ -1203,17 +1660,287 @@
         </div>
     </div>
 
+    <!-- Modal de Edição de Questionários -->
+    <div id="editar-questionarios-modal" class="modal-overlay hidden">
+        <div class="modal modal-large">
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                    <h3 style="margin: 0;">
+                        <i class="fas fa-edit"></i>
+                        Editar Templates de Avaliações
+                    </h3>
+                    <button type="button" onclick="fecharModalEditarQuestionarios()" style="background: none; border: none; color: #6b7280; cursor: pointer; padding: 10px; border-radius: 50%; transition: all 0.3s ease; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#f3f4f6'; this.style.color='#374151'" onmouseout="this.style.background='none'; this.style.color='#6b7280'">
+                        <i class="fas fa-times" style="font-size: 22px;"></i>
+                    </button>
+                </div>
+                
+                <!-- Seletor de Template -->
+                <div class="form-group">
+                    <label class="form-label">Selecionar Template para Editar:</label>
+                    <div style="display: flex; gap: 12px;">
+                        <button class="btn-template-selector active" data-template="45" onclick="selecionarTemplateEdicao('45')">
+                            <i class="fas fa-calendar-day"></i>
+                            Template 45 Dias
+                        </button>
+                        <button class="btn-template-selector" data-template="90" onclick="selecionarTemplateEdicao('90')">
+                            <i class="fas fa-calendar"></i>
+                            Template 90 Dias
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Lista de Perguntas -->
+                <div class="form-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <label class="form-label" style="margin: 0;">Perguntas do Questionário:</label>
+                        <button class="btn btn-secondary btn-sm" onclick="adicionarNovaPergunta()">
+                            <i class="fas fa-plus"></i>
+                            Nova Pergunta
+                        </button>
+                    </div>
+                    
+                    <div id="lista-perguntas-edicao" class="lista-perguntas-edicao">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            Carregando perguntas...
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="fecharModalEditarQuestionarios()">
+                        Cancelar
+                    </button>
+                    <button type="button" class="btn btn-amber" onclick="salvarQuestionario()">
+                        <i class="fas fa-save"></i>
+                        Salvar Alterações
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Responder Avaliação -->
+    <div id="responder-avaliacao-modal" class="modal-overlay hidden">
+        <div class="modal modal-large">
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                    <h3 style="margin: 0;" id="titulo-avaliacao">
+                        <i class="fas fa-clipboard-check"></i>
+                        Responder Avaliação
+                    </h3>
+                    <button type="button" onclick="fecharModalResponderAvaliacao()" style="background: none; border: none; color: #6b7280; cursor: pointer; padding: 10px; border-radius: 50%; transition: all 0.3s ease; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#f3f4f6'; this.style.color='#374151'" onmouseout="this.style.background='none'; this.style.color='#6b7280'">
+                        <i class="fas fa-times" style="font-size: 22px;"></i>
+                    </button>
+                </div>
+                
+                <!-- Informações da Avaliação -->
+                <div id="info-avaliacao" class="card" style="background: #f9fafb; margin-bottom: 24px;">
+                    <!-- Será preenchido dinamicamente -->
+                </div>
+                
+                <!-- Abas: Responder / Visualizar Respostas -->
+                <div class="avaliacoes-tabs" style="margin-bottom: 24px; border-bottom: 1px solid #e5e7eb;">
+                    <div style="display: flex; gap: 24px;">
+                        <button class="avaliacao-tab active" data-avaliacao-tab="responder" onclick="trocarAbaAvaliacao('responder')" id="tab-responder">
+                            <i class="fas fa-edit"></i>
+                            Responder
+                        </button>
+                        <button class="avaliacao-tab" data-avaliacao-tab="visualizar" onclick="trocarAbaAvaliacao('visualizar')" id="tab-visualizar" style="display: none;">
+                            <i class="fas fa-eye"></i>
+                            Visualizar Respostas
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Conteúdo: Responder -->
+                <div id="aba-responder-avaliacao" class="aba-avaliacao-content">
+                    <div id="formulario-avaliacao">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            Carregando questionário...
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Conteúdo: Visualizar Respostas -->
+                <div id="aba-visualizar-respostas" class="aba-avaliacao-content hidden">
+                    <div id="respostas-avaliacao">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            Carregando respostas...
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="modal-actions" id="acoes-avaliacao">
+                    <button type="button" class="btn btn-secondary" onclick="fecharModalResponderAvaliacao()">
+                        Fechar
+                    </button>
+                    <button type="button" class="btn btn-amber" id="btn-enviar-avaliacao" onclick="enviarRespostasAvaliacao()">
+                        <i class="fas fa-paper-plane"></i>
+                        Enviar Respostas
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Reabrir Avaliação -->
+    <div id="reabrir-avaliacao-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 style="margin: 0;">
+                        <i class="fas fa-redo"></i>
+                        Reabrir Avaliação Expirada
+                    </h3>
+                    <button type="button" onclick="fecharModalReabrirAvaliacao()" style="background: none; border: none; color: #6b7280; cursor: pointer; padding: 10px; border-radius: 50%; transition: all 0.3s ease; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#f3f4f6'; this.style.color='#374151'" onmouseout="this.style.background='none'; this.style.color='#6b7280'">
+                        <i class="fas fa-times" style="font-size: 22px;"></i>
+                    </button>
+                </div>
+                
+                <p style="color: #6b7280; margin-bottom: 20px;">
+                    Defina uma nova data limite para que os participantes possam responder esta avaliação.
+                </p>
+                
+                <div class="form-group">
+                    <label class="form-label">Nova Data Limite de Resposta</label>
+                    <input type="date" class="form-input" id="nova-data-limite-avaliacao" required>
+                </div>
+                
+                <input type="hidden" id="avaliacao-id-reabrir">
+                
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="fecharModalReabrirAvaliacao()">
+                        Cancelar
+                    </button>
+                    <button type="button" class="btn btn-amber" onclick="reabrirAvaliacao()">
+                        <i class="fas fa-redo"></i>
+                        Reabrir Avaliação
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Edição de Pergunta Individual -->
+    <div id="editar-pergunta-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-content">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h3 style="margin: 0;" id="titulo-modal-pergunta">
+                        <i class="fas fa-question-circle"></i>
+                        Editar Pergunta
+                    </h3>
+                    <button type="button" onclick="fecharModalEditarPergunta()" style="background: none; border: none; color: #6b7280; cursor: pointer; padding: 10px; border-radius: 50%; transition: all 0.3s ease; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;" onmouseover="this.style.background='#f3f4f6'; this.style.color='#374151'" onmouseout="this.style.background='none'; this.style.color='#6b7280'">
+                        <i class="fas fa-times" style="font-size: 22px;"></i>
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Tipo de Pergunta</label>
+                    <select class="form-select" id="pergunta-tipo" onchange="atualizarCamposPergunta()">
+                        <option value="texto">Texto Livre</option>
+                        <option value="multipla_escolha">Múltipla Escolha</option>
+                        <option value="escala">Escala (1-5)</option>
+                        <option value="sim_nao">Sim/Não</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">Pergunta</label>
+                    <textarea class="form-textarea" id="pergunta-texto" placeholder="Digite a pergunta..." rows="3"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="pergunta-obrigatoria" checked>
+                        <span class="checkmark"></span>
+                        Pergunta obrigatória
+                    </label>
+                </div>
+                
+                <!-- Campos para perguntas de escala -->
+                <div id="campo-escala" class="form-group" style="display: none;">
+                    <label class="form-label">Configurações da Escala:</label>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Valor Mínimo (1-10)</label>
+                            <input type="number" class="form-input" id="escala-minima" value="1" min="1" max="10" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Valor Máximo (1-10)</label>
+                            <input type="number" class="form-input" id="escala-maxima" value="5" min="1" max="10" required>
+                        </div>
+                    </div>
+                    <p style="color: #6b7280; font-size: 12px; margin-top: 8px;">
+                        <i class="fas fa-info-circle"></i>
+                        O mínimo deve ser entre 1 e 10, e o máximo deve ser maior que o mínimo (máx: 10)
+                    </p>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Label Mínimo (Opcional)</label>
+                            <input type="text" class="form-input" id="escala-label-min" placeholder="Ex: Muito Ruim">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Label Máximo (Opcional)</label>
+                            <input type="text" class="form-input" id="escala-label-max" placeholder="Ex: Excelente">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Campo para opções de múltipla escolha -->
+                <div id="campo-opcoes-multipla" class="form-group" style="display: none;">
+                    <label class="form-label">Opções de Resposta:</label>
+                    <div id="lista-opcoes-edicao">
+                        <!-- Opções serão adicionadas aqui dinamicamente -->
+                    </div>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="adicionarOpcao()" style="margin-top: 8px;">
+                        <i class="fas fa-plus"></i>
+                        Adicionar Opção
+                    </button>
+                </div>
+                
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="fecharModalEditarPergunta()">
+                        Cancelar
+                    </button>
+                    <button type="button" class="btn btn-amber" onclick="salvarPergunta()">
+                        <i class="fas fa-save"></i>
+                        Salvar Pergunta
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts principais -->
-    <script src="js/feedback-chat.js"></script>
+    <script src="js/historico-config.js"></script>
+    <script src="js/cache-manager.js"></script>
+    <script src="js/excel-parser.js"></script>
+    <script src="js/historico.js"></script>
+    <script src="js/responder-avaliacao.js"></script>
     <script>
-        // Inicializar sistema de chat globalmente
-        window.feedbackChat = new FeedbackChat();
+        // Inicializar sistema de chat imediatamente após carregar o script
+        if (typeof FeedbackChat !== 'undefined' && typeof window.feedbackChat === 'undefined') {
+            console.log('Inicializando FeedbackChat...');
+            window.feedbackChat = new FeedbackChat();
+            console.log('FeedbackChat inicializado:', window.feedbackChat);
+        } else {
+            console.log('FeedbackChat não disponível ou já inicializado');
+        }
         
         // Função global para compatibilidade
         window.toggleFeedbackChat = function(feedbackId) {
-            window.feedbackChat.openChat(feedbackId);
+            console.log('toggleFeedbackChat chamado com ID:', feedbackId);
+            if (window.feedbackChat) {
+                window.feedbackChat.openChat(feedbackId);
+            } else {
+                console.error('window.feedbackChat não está disponível');
+            }
         };
     </script>
-    <script src="js/index.js"></script>
+    <script src="js/index.js?v=20251001FIX3"></script>
 </body>
 </html>

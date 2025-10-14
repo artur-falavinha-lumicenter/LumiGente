@@ -6,7 +6,7 @@
     width: 100%;
     height: 100%;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
+    z-index: 1004;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -110,6 +110,61 @@
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.message-sender {
+    font-size: 11px;
+    font-weight: 600;
+    color: #374151;
+}
+
+.chat-message.own .message-sender {
+    color: #0d556d;
+}
+
+.chat-message.other .message-sender {
+    color: #6b7280;
+}
+
+/* Estilos específicos para modo gestor */
+.manager-mode .chat-message.own .message-bubble {
+    background: #0d556d;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.manager-mode .chat-message.other .message-bubble {
+    background: #f3f4f6;
+    color: #1f2937;
+    border: 1px solid #d1d5db;
+    border-bottom-left-radius: 4px;
+}
+
+.manager-mode .message-sender {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.manager-mode .chat-message.own .message-sender {
+    color: #0d556d;
+    background: rgba(13, 85, 109, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.manager-mode .chat-message.other .message-sender {
+    color: #059669;
+    background: rgba(5, 150, 105, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
 }
 
 .message-time {
@@ -325,7 +380,7 @@
     border-radius: 12px;
     padding: 16px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-    z-index: 1001;
+    z-index: 1005;
     display: none;
     width: 280px;
 }
@@ -373,7 +428,7 @@
     border-radius: 20px;
     padding: 8px 12px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    z-index: 1002;
+    z-index: 1006;
     display: none;
     flex-direction: row;
     gap: 8px;
@@ -538,5 +593,107 @@
     40% {
         transform: scale(1);
         opacity: 1;
+    }
+}
+
+/* Notificação de Pontos */
+.points-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1005;
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.3);
+    transform: translateX(400px);
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    max-width: 350px;
+    min-width: 300px;
+}
+
+.points-notification.show {
+    transform: translateX(0);
+    opacity: 1;
+}
+
+.points-notification-content {
+    display: flex;
+    align-items: center;
+    padding: 16px;
+    gap: 12px;
+}
+
+.points-notification-icon {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.points-notification-text {
+    flex: 1;
+}
+
+.points-notification-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+}
+
+.points-notification-message {
+    font-size: 12px;
+    opacity: 0.9;
+    line-height: 1.4;
+}
+
+.points-notification-close {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+
+.points-notification-close:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Animação para atualização de pontos */
+@keyframes pointsUpdate {
+    0% {
+        transform: scale(1);
+        color: inherit;
+    }
+    50% {
+        transform: scale(1.2);
+        color: #10b981;
+        text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+    }
+    100% {
+        transform: scale(1);
+        color: inherit;
+    }
+}
+
+/* Responsividade para notificação */
+@media (max-width: 768px) {
+    .points-notification {
+        top: 10px;
+        right: 10px;
+        left: 10px;
+        max-width: none;
+        min-width: auto;
     }
 }

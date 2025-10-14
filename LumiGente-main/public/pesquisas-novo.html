@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pesquisas - Novo Sistema</title>
+    <link rel="stylesheet" href="styles/pesquisas-novo.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- Bibliotecas para exportação PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <div class="header-left">
+                    <h1><i class="fas fa-poll"></i> Pesquisas</h1>
+                    <p>Sistema com recursos de filtragem e visualização de pesquisas existentes</p>
+                </div>
+                <div class="header-right">
+                    <button id="btn-nova-pesquisa" class="btn btn-primary" style="display: none; border: 1px solid rgb(255, 255, 255);">
+                        <i class="fas fa-plus"></i> Nova Pesquisa
+                    </button>
+                    <button onclick="window.close()" class="btn btn-secondary" style="border: 1px solid rgb(255, 255, 255);">
+                        <i class="fas fa-times"></i> Fechar
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Filtros -->
+        <div class="filters-section">
+            <div class="filters-row">
+                <div class="filter-group">
+                    <input type="text" id="search" placeholder="Buscar pesquisas..." class="search-input">
+                    <i class="fas fa-search search-icon"></i>
+                </div>
+                
+                <div class="filter-group">
+                    <select id="status-filter" class="filter-select">
+                        <option value="">Todos os Status</option>
+                        <option value="Ativa">Ativas</option>
+                        <option value="Encerrada">Encerradas</option>
+                        <option value="Agendada">Agendadas</option>
+                    </select>
+                </div>
+                
+                <button id="btn-refresh" class="btn btn-outline">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="loading">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Carregando pesquisas...</p>
+        </div>
+
+        <!-- Lista de Pesquisas -->
+        <div id="surveys-container" class="surveys-container">
+            <!-- Pesquisas serão carregadas aqui -->
+        </div>
+
+        <!-- Paginação -->
+        <div id="pagination" class="pagination" style="display: none;">
+            <!-- Paginação será inserida aqui -->
+        </div>
+
+        <!-- Modal de Resposta -->
+        <div id="response-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="modal-title">Responder Pesquisa</h3>
+                    <button class="modal-close" onclick="closeResponseModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body" id="modal-body">
+                    <!-- Conteúdo do modal será inserido aqui -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal de Resultados -->
+        <div id="results-modal" class="modal" style="display: none;">
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h3 id="results-title">Resultados da Pesquisa</h3>
+                    <button class="modal-close" onclick="closeResultsModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body" id="results-body">
+                    <!-- Resultados serão inseridos aqui -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/pesquisas-novo.js"></script>
+</body>
+</html>
