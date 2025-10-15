@@ -4,7 +4,7 @@ const HierarchyManager = require('./hierarchyManager'); // Importa o HierarchyMa
 
 class SincronizadorDadosExternos {
     constructor() {
-        // Construtor agora é limpo e não depende de 'dbConfig'.
+        // O construtor agora é limpo.
         // O HierarchyManager também não precisa mais de config no seu construtor.
         this.hierarchyManager = new HierarchyManager();
         this.isRunning = false;
@@ -44,16 +44,28 @@ class SincronizadorDadosExternos {
         this.isRunning = false;
         console.log('⏸️ Sincronizador automático parado.');
     }
+    
+    /**
+     * Retorna o status atual do sincronizador.
+     */
+    getStatus() {
+        return {
+            isRunning: this.isRunning,
+            lastSync: this.lastSync,
+            nextSync: this.isRunning && this.syncInterval ? 'Em aproximadamente 30 minutos' : 'Parado'
+        };
+    }
 
     /**
      * Orquestra a execução de todas as tarefas de sincronização.
      */
     async syncAllData() {
         console.log('\n================================================');
-        console.log(`[SYNC START] Início do ciclo: ${new Date().toLocaleString('pt-BR')}`);
+        console.log(`[SYNC START] Início do ciclo de sincronização: ${new Date().toLocaleString('pt-BR')}`);
+        this.lastSync = new Date();
         try {
             await this.syncFuncionarios();
-            console.log(`[SYNC END] Ciclo concluído com sucesso: ${new Date().toLocaleString('pt-BR')}`);
+            console.log(`[SYNC END] Sincronização concluída com sucesso: ${new Date().toLocaleString('pt-BR')}`);
         } catch (error) {
             console.error('\n❌ Erro fatal durante o ciclo de sincronização:', error);
         }
@@ -61,16 +73,17 @@ class SincronizadorDadosExternos {
     }
 
     /**
-     * Sincroniza os dados dos funcionários entre o banco de dados externo e o da aplicação.
-     * Esta é a lógica central do seu sincronizador original.
+     * Sincroniza os dados dos funcionários entre a base de dados externa e a da aplicação.
      */
     async syncFuncionarios() {
-        const pool = await getDatabasePool(); // Usa a conexão centralizada
+        // Na nova arquitetura, getDatabasePool retorna a conexão para o mesmo servidor,
+        // onde ambas as tabelas (Users e TAB_HIST_SRA) devem estar acessíveis.
+        const pool = await getDatabasePool();
         
         try {
             console.log('👥 Sincronizando funcionários...');
 
-            // 1. Busca os registros de funcionários mais relevantes do banco externo
+            // 1. Busca os registros de funcionários mais relevantes da fonte externa (TAB_HIST_SRA)
             console.log('   - Buscando funcionários priorizados da fonte de dados externa...');
             const funcionariosExternosResult = await pool.request().query(`
                 WITH FuncionarioPriorizado AS (
@@ -94,7 +107,7 @@ class SincronizadorDadosExternos {
             const funcionariosExternos = funcionariosExternosResult.recordset;
             console.log(`   - ${funcionariosExternos.length} registros únicos de funcionários encontrados para processar.`);
 
-            let criados = 0, atualizados = 0, inativados = 0, erros = 0;
+            let criados = 0, atualizados = 0, erros = 0;
 
             // 2. Processa cada funcionário encontrado
             for (let i = 0; i < funcionariosExternos.length; i++) {
@@ -103,12 +116,12 @@ class SincronizadorDadosExternos {
                     console.log(`   - Processando ${i}/${funcionariosExternos.length}...`);
                 }
                 try {
-                    const userCheck = await pool.request().input('cpf', sql.VarChar, func.CPF).query('SELECT Id, Matricula, Departamento, NomeCompleto, Filial FROM Users WHERE CPF = @cpf');
+                    const userCheck = await pool.request().input('cpf', sql.VarChar, func.CPF).query('SELECT Id, Matricula, Departamento, NomeCompleto, Filial, IsActive FROM Users WHERE CPF = @cpf');
                     
                     if (userCheck.recordset.length > 0) { // Usuário já existe
                         const userAtual = userCheck.recordset[0];
                         if (func.STATUS_GERAL === 'ATIVO') {
-                             if (userAtual.Matricula !== func.MATRICULA || userAtual.NomeCompleto !== func.NOME || userAtual.Departamento !== func.DEPARTAMENTO || userAtual.Filial !== func.FILIAL) {
+                            if (userAtual.Matricula !== func.MATRICULA || userAtual.NomeCompleto !== func.NOME || userAtual.Departamento !== func.DEPARTAMENTO || userAtual.Filial !== func.FILIAL || !userAtual.IsActive) {
                                 await this.atualizarUsuario(pool, func);
                                 atualizados++;
                             }
@@ -131,9 +144,9 @@ class SincronizadorDadosExternos {
                 UPDATE Users 
                 SET IsActive = 0, updated_at = GETDATE()
                 WHERE IsActive = 1
-                  AND CPF NOT IN (SELECT CPF FROM TAB_HIST_SRA WHERE STATUS_GERAL = 'ATIVO')
+                  AND CPF NOT IN (SELECT CPF FROM TAB_HIST_SRA WHERE STATUS_GERAL = 'ATIVO' AND CPF IS NOT NULL)
             `);
-            inativados = inativacaoResult.rowsAffected[0];
+            const inativados = inativacaoResult.rowsAffected[0];
 
             console.log('\n📈 Resultados da sincronização de funcionários:');
             console.log(`   ✨ Novos: ${criados}`);
@@ -208,7 +221,7 @@ class SincronizadorDadosExternos {
                 .input('departamento', sql.VarChar, departamento)
                 .query(`SELECT TOP 1 DESCRICAO_ATUAL FROM HIERARQUIA_CC WHERE TRIM(DEPTO_ATUAL) = TRIM(@departamento) ORDER BY LEN(HIERARQUIA_COMPLETA) DESC`);
 
-            return result.recordset.length > 0 ? result.recordset[0].DESCRICAO_ATUAL : departamento;
+            return result.recordset.length > 0 ? (result.recordset[0].DESCRICAO_ATUAL || departamento) : departamento;
         } catch (error) {
             console.error(`   - ⚠️ Erro ao buscar descrição do depto ${departamento}:`, error.message);
             return departamento; // Retorna o código como fallback

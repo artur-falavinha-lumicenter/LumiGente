@@ -54,15 +54,19 @@ exports.login = async (req, res) => {
         let user = userResult.recordset[0];
 
         if (!user) {
-            return res.status(401).json({ error: 'Usuário não encontrado no sistema.', userNotFound: true });
+            return res.status(401).json({ error: 'Utilizador não encontrado no sistema.', userNotFound: true });
         }
 
         if (user.FirstLogin === 1 || user.FirstLogin === true) {
-            return res.status(200).json({ needsRegistration: true, error: 'Você não possui cadastro ainda. Crie uma conta primeiro.' });
+            return res.status(200).json({ needsRegistration: true, error: 'Você ainda não possui registo. Crie uma conta primeiro.' });
         }
 
         if (!user.IsActive) {
-            return res.status(401).json({ userInactive: true, error: 'Usuário inativo. Entre em contato com o administrador.' });
+            return res.status(401).json({ userInactive: true, error: 'Utilizador inativo. Entre em contacto com o administrador.' });
+        }
+
+        if (!user.PasswordHash) {
+             return res.status(401).json({ error: 'Senha não configurada. Por favor, complete o seu registo.' });
         }
 
         const senhaValida = await bcrypt.compare(password, user.PasswordHash);
@@ -70,11 +74,10 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: 'Senha incorreta' });
         }
         
-        // Atualiza dados do usuário com base no sistema externo (se necessário)
-        const { path: hierarchyPath } = await hierarchyManager.getHierarchyLevel(funcionario.MATRICULA);
-        const departamentoCorreto = funcionario.DEPARTAMENTO;
+        const { path: hierarchyPath, departamento: deptoHierarchy } = await hierarchyManager.getHierarchyInfo(funcionario.MATRICULA, funcionario.CPF);
+        const departamentoCorreto = deptoHierarchy || funcionario.DEPARTAMENTO;
         
-        if (user.Matricula !== funcionario.MATRICULA || user.Departamento !== departamentoCorreto || user.HierarchyPath !== hierarchyPath) {
+        if (user.Matricula !== funcionario.MATRICULA || user.Departamento !== departamentoCorreto || user.HierarchyPath !== hierarchyPath || user.Filial !== funcionario.FILIAL) {
              await pool.request()
                 .input('userId', sql.Int, user.Id)
                 .input('matricula', sql.VarChar, funcionario.MATRICULA)
@@ -88,11 +91,22 @@ exports.login = async (req, res) => {
                         HierarchyPath = @hierarchyPath, Filial = @filial, updated_at = GETDATE()
                     WHERE Id = @userId
                 `);
+            
+            // Atualiza o objeto user para a sessão
+            user.Matricula = funcionario.MATRICULA;
+            user.NomeCompleto = funcionario.NOME;
+            user.Departamento = departamentoCorreto;
+            user.HierarchyPath = hierarchyPath;
+            user.Filial = funcionario.FILIAL;
         }
 
-        await pool.request().input('userId', sql.Int, user.Id).query(`UPDATE Users SET LastLogin = GETDATE() WHERE Id = @userId`);
+        try {
+            await pool.request().input('userId', sql.Int, user.Id).query(`UPDATE Users SET LastLogin = GETDATE() WHERE Id = @userId`);
+        } catch (err) {
+            console.warn("Aviso: Coluna 'LastLogin' não encontrada. Continuando sem atualizar o último login.");
+        }
 
-        const hierarchyLevel = getHierarchyLevel(hierarchyPath, funcionario.MATRICULA, departamentoCorreto);
+        const hierarchyLevel = getHierarchyLevel(user.HierarchyPath, user.Matricula, user.Departamento);
         let role = 'Funcionário';
         if (hierarchyLevel >= 4) role = 'Diretor';
         else if (hierarchyLevel >= 3) role = 'Gerente';
@@ -103,14 +117,14 @@ exports.login = async (req, res) => {
             userId: user.Id,
             userName: user.UserName,
             role: role,
-            nomeCompleto: funcionario.NOME,
-            nome: funcionario.NOME.split(' ')[0],
-            departamento: departamentoCorreto,
-            filial: funcionario.FILIAL,
+            nomeCompleto: user.NomeCompleto,
+            nome: user.NomeCompleto.split(' ')[0],
+            departamento: user.Departamento,
+            filial: user.Filial,
             cpf: cpfFormatado,
-            matricula: funcionario.MATRICULA,
+            matricula: user.Matricula,
             hierarchyLevel: hierarchyLevel,
-            hierarchyPath: hierarchyPath,
+            hierarchyPath: user.HierarchyPath,
         };
 
         res.json(req.session.user);
@@ -126,12 +140,10 @@ exports.register = async (req, res) => {
 
     try {
         if (!cpf || !password || !validarCPF(cpf) || password.length < 6) {
-            return res.status(400).json({ error: 'Dados de registro inválidos.' });
+            return res.status(400).json({ error: 'Dados de registo inválidos.' });
         }
 
-        const cpfSemFormatacao = cpf.replace(/[^\d]/g, '');
         const cpfFormatado = formatarCPF(cpf);
-
         const pool = await getDatabasePool();
         
         const existingUserResult = await pool.request()
@@ -139,12 +151,12 @@ exports.register = async (req, res) => {
             .query(`SELECT Id, FirstLogin FROM Users WHERE CPF = @cpf`);
 
         if (existingUserResult.recordset.length === 0) {
-            return res.status(400).json({ error: 'CPF não encontrado no sistema para cadastro.' });
+            return res.status(400).json({ error: 'CPF não encontrado no sistema para registo.' });
         }
 
         const existingUser = existingUserResult.recordset[0];
         if (existingUser.FirstLogin === 0 || existingUser.FirstLogin === false) {
-            return res.status(400).json({ error: 'Usuário já possui cadastro realizado.' });
+            return res.status(400).json({ error: 'Utilizador já possui registo realizado.' });
         }
 
         const senhaHash = await bcrypt.hash(password, 10);
@@ -160,9 +172,9 @@ exports.register = async (req, res) => {
                 WHERE CPF = @cpf
             `);
         
-        res.json({ success: true, message: 'Cadastro realizado com sucesso' });
+        res.json({ success: true, message: 'Registo realizado com sucesso' });
     } catch (error) {
-        console.error('Erro no cadastro:', error);
+        console.error('Erro no registo:', error);
         res.status(500).json({ error: 'Erro interno do servidor' });
     }
 };
@@ -171,9 +183,10 @@ exports.register = async (req, res) => {
 exports.logout = (req, res) => {
     req.session.destroy((err) => {
         if (err) {
+            console.error('Erro ao destruir sessão:', err);
             return res.status(500).json({ error: 'Erro ao fazer logout' });
         }
-        res.clearCookie('lumigente.sid');
+        res.clearCookie('lumigente.sid'); // Garante que o cookie seja limpo
         res.json({ success: true, message: 'Logout realizado com sucesso' });
     });
 };
@@ -192,10 +205,10 @@ exports.checkCpf = async (req, res) => {
             .query(`SELECT Id FROM Users WHERE CPF = @cpf`);
 
         if (userResult.recordset.length > 0) {
-            return res.json({ exists: true, message: 'CPF já cadastrado' });
+            return res.json({ exists: true, message: 'CPF já registado' });
         }
         
-        return res.json({ exists: false, message: 'CPF válido para cadastro' });
+        return res.json({ exists: false, message: 'CPF válido para registo' });
     } catch (error) {
         console.error('Erro ao verificar CPF:', error);
         res.status(500).json({ error: 'Erro interno do servidor' });
