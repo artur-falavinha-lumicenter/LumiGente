@@ -13,16 +13,16 @@ const analyticsRoutes = require('./analyticsRoutes');
 const pesquisaRoutes = require('./pesquisaRoutes');
 
 // Definição dos prefixos para cada conjunto de rotas
-router.use('/api', authRoutes);
-router.use('/api/users', userRoutes);
-router.use('/api/usuario', userRoutes);
-router.use('/api/feedbacks', feedbackRoutes);
-router.use('/api/recognitions', recognitionRoutes);
-router.use('/api/humor', humorRoutes);
-router.use('/api/objetivos', objetivoRoutes);
-router.use('/api/avaliacoes', avaliacaoRoutes);
-router.use('/api/analytics', analyticsRoutes);
-router.use('/api/manager', analyticsRoutes);
-router.use('/api/pesquisas', pesquisaRoutes);
+router.use('/', authRoutes); // Rotas como /login, /logout, /register
+router.use('/users', userRoutes);
+router.use('/usuario', userRoutes); // Mantendo para compatibilidade
+router.use('/feedbacks', feedbackRoutes);
+router.use('/recognitions', recognitionRoutes);
+router.use('/humor', humorRoutes);
+router.use('/objetivos', objetivoRoutes);
+router.use('/avaliacoes', avaliacaoRoutes);
+router.use('/analytics', analyticsRoutes);
+router.use('/manager', analyticsRoutes); // Rotas de manager em analytics
+router.use('/pesquisas', pesquisaRoutes);
 
 module.exports = router;
